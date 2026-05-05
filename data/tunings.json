@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "title": "Stringjoy - Alternate Guitar Tunings: The Ultimate Guide",
+      "url": "https://stringjoy.com/alternate-tunings/",
+      "summary": "Drop D, down tunings, open tunings, DADGAD and common metal-oriented tunings are introduced as practical alternate-tuning families."
+    },
+    {
+      "title": "Guitar.com - An introduction to alternate tunings: Drop D, Open G and DADGAD",
+      "url": "https://guitar.com/features/an-introduction-to-alternate-tunings-drop-d-open-g-and-dadgad-for-electric-guitar/",
+      "summary": "Drop D, Open G and DADGAD are presented as common entry points for electric guitar alternate tunings."
+    },
+    {
+      "title": "GuitarTuner.io - Open Tunings Explained",
+      "url": "https://guitartuner.io/blog/open-tunings-explained/",
+      "summary": "DADGAD, Open G, Open D, Open E and Open C are described as widely used open or modal tunings."
+    },
+    {
+      "title": "Wikipedia - Guitar tunings",
+      "url": "https://en.wikipedia.org/wiki/Guitar_tunings",
+      "summary": "Lists standard, drop, open, regular and other guitar tuning families, including Drop D and Open D."
+    }
+  ],
+  "presets": [
+    {
+      "id": "standard",
+      "name": "Standard",
+      "notes_low_to_high": ["E2", "A2", "D3", "G3", "B3", "E4"],
+      "description": "Most common six-string guitar tuning."
+    },
+    {
+      "id": "drop_d",
+      "name": "Drop D",
+      "notes_low_to_high": ["D2", "A2", "D3", "G3", "B3", "E4"],
+      "description": "Standard tuning with the 6th string lowered one whole step."
+    },
+    {
+      "id": "half_step_down",
+      "name": "Half-Step Down",
+      "notes_low_to_high": ["Eb2", "Ab2", "Db3", "Gb3", "Bb3", "Eb4"],
+      "description": "Every string tuned down one semitone."
+    },
+    {
+      "id": "d_standard",
+      "name": "D Standard",
+      "notes_low_to_high": ["D2", "G2", "C3", "F3", "A3", "D4"],
+      "description": "Every string tuned down one whole step from standard."
+    },
+    {
+      "id": "drop_c",
+      "name": "Drop C",
+      "notes_low_to_high": ["C2", "G2", "C3", "F3", "A3", "D4"],
+      "description": "D Standard with the 6th string dropped to C."
+    },
+    {
+      "id": "dadgad",
+      "name": "DADGAD",
+      "notes_low_to_high": ["D2", "A2", "D3", "G3", "A3", "D4"],
+      "description": "Modal Dsus4 tuning common in folk, Celtic and fingerstyle guitar."
+    },
+    {
+      "id": "open_g",
+      "name": "Open G",
+      "notes_low_to_high": ["D2", "G2", "D3", "G3", "B3", "D4"],
+      "description": "Open G major tuning used often for blues, rock and slide."
+    },
+    {
+      "id": "open_d",
+      "name": "Open D",
+      "notes_low_to_high": ["D2", "A2", "D3", "F#3", "A3", "D4"],
+      "description": "Open D major tuning, also called Vestapol in some traditions."
+    },
+    {
+      "id": "open_e",
+      "name": "Open E",
+      "notes_low_to_high": ["E2", "B2", "E3", "G#3", "B3", "E4"],
+      "description": "Open E major tuning, closely related to Open D raised one whole step."
+    },
+    {
+      "id": "open_c",
+      "name": "Open C",
+      "notes_low_to_high": ["C2", "G2", "C3", "G3", "C4", "E4"],
+      "description": "Open C major tuning with a broad, resonant low range."
+    }
+  ]
+}

@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "language": "ko",
+  "sources": [
+    {
+      "id": "wiki_bar_chord",
+      "title": "Wikipedia - Bar chord",
+      "url": "https://en.wikipedia.org/wiki/Bar_chord",
+      "summary": "바레 코드는 한 손가락으로 같은 프렛의 여러 줄을 누르는 방식이며, 이동형 코드 모양은 일반적으로 네 프렛 범위 안에 있어야 실용적이다."
+    },
+    {
+      "id": "wiki_guitar_chord",
+      "title": "Wikipedia - Guitar chord",
+      "url": "https://en.wikipedia.org/wiki/Guitar_chord",
+      "summary": "기타의 일반적인 코드 운지는 개방현, 중복음, 대체 보이싱, drop voicing을 활용하며, 왼손 한 포지션을 네 프렛으로 보는 관점을 제공한다."
+    },
+    {
+      "id": "wiki_open_chord",
+      "title": "Wikipedia - Open chord",
+      "url": "https://en.wikipedia.org/wiki/Open_chord",
+      "summary": "오픈 코드는 손가락으로 누르지 않은 개방현을 포함하고, 개방현은 울림과 지속음이 크지만 뮤트 제어가 별도로 필요할 수 있다."
+    },
+    {
+      "id": "guitar_wiz_shell_voicings",
+      "title": "Guitar Wiz - Shell Voicings for Guitar",
+      "url": "https://guitarwiz.app/articles/shell-voicings-guitar/",
+      "summary": "재즈/확장화음에서는 root, 3rd, 7th 중심의 3음 shell voicing이 코드 성격을 선명하게 전달하고 손가락 부담을 줄인다."
+    },
+    {
+      "id": "puget_sound_jazz_chord_voicings",
+      "title": "Puget Sound - Jazz Chord Voicings",
+      "url": "https://musictheory.pugetsound.edu/mt21c/JazzChordVoicings.html",
+      "summary": "Guide tone은 코드의 3도와 7도이며, 5성부를 유지해야 할 때는 5도를 생략할 수 있다고 설명한다."
+    },
+    {
+      "id": "open_music_theory_jazz_voicings",
+      "title": "Open Music Theory - Jazz Voicings",
+      "url": "https://viva.pressbooks.pub/openmusictheory/chapter/jazz-voicings/",
+      "summary": "확장화음에서는 5도가 가장 흔히 생략되며, 7도나 root를 생략하면 코드 성격이 크게 바뀐다고 설명한다."
+    },
+    {
+      "id": "wiki_chord_notation_extended",
+      "title": "Wikipedia - Chord notation",
+      "url": "https://en.wikipedia.org/wiki/Chord_notation",
+      "summary": "9th chord는 7th chord에 9도를 더한 것이므로 7도가 없으면 add9로 해석되고, 11th chord에서 9도가 빠지면 add11 성격으로 바뀐다고 설명한다."
+    },
+    {
+      "id": "wiki_extended_chord_omissions",
+      "title": "Wikipedia - Extended chord",
+      "url": "https://en.wikipedia.org/wiki/Extended_chord",
+      "summary": "실제 보이싱에서는 모든 구성음을 다 누르지 않으며, 자연 5도와 중간 확장음은 종종 생략하지만 변화음은 색채를 위해 유지한다고 설명한다."
+    },
+    {
+      "id": "wiki_guitar_chord_categories",
+      "title": "Wikipedia - Guitar chord",
+      "url": "https://en.wikipedia.org/wiki/Guitar_chord",
+      "summary": "기타 코드의 기본 재료로 triad, dominant seventh, open chord, barre chord, inversion을 설명한다."
+    },
+    {
+      "id": "wiki_bar_chord_caged",
+      "title": "Wikipedia - Bar chord / CAGED",
+      "url": "https://en.wikipedia.org/wiki/Bar_chord",
+      "summary": "CAGED system은 C, A, G, E, D 오픈 코드 모양을 바레로 이동해 지판 전체에서 쓰는 분류로 설명한다."
+    },
+    {
+      "id": "guitar_wiz_drop2",
+      "title": "Guitar Wiz - Drop 2 Voicings on Guitar",
+      "url": "https://guitarwiz.app/articles/drop-2-voicings-guitar/",
+      "summary": "Drop 2는 재즈 기타에서 중요한 네 음 이동형 보이싱이며, 흔한 줄 그룹은 5-4-3-2와 4-3-2-1이라고 설명한다."
+    },
+    {
+      "id": "jazz_guitar_lessons_shell",
+      "title": "Jazz Guitar Lessons - Shell Voicings",
+      "url": "https://www.jazzguitarlessons.net/blog/shell-voicings-jazz-guitar",
+      "summary": "Shell voicing은 root, 3rd, 7th의 세 음으로 화성 정보를 압축하는 재즈 기타 기본 보이싱이라고 설명한다."
+    },
+    {
+      "id": "wiki_voicing_drop",
+      "title": "Wikipedia - Voicing",
+      "url": "https://en.wikipedia.org/wiki/Voicing_(music)",
+      "summary": "Drop voicing은 특정 성부를 한 옥타브 아래로 내려 만드는 보이싱이며, 기타에서 이동 가능한 코드 폼으로 쓰인다고 설명한다."
+    }
+  ],
+  "categories": [
+    "Triad",
+    "CAGED system",
+    "Open",
+    "Barre/Movable",
+    "Shell voicing",
+    "Drop 2",
+    "Drop 3",
+    "Inversion/Slash",
+    "Extended/Color",
+    "Power/Sus",
+    "기타"
+  ],
+  "rules": [
+    "한 코드 폼의 프렛손 범위는 눌러야 하는 프렛 기준 최대 네 프렛으로 제한한다.",
+    "한 줄에는 한 음만 배치한다.",
+    "개방현은 손가락을 쓰지 않지만, 높은 포지션에서 임의로 섞인 개방현은 우선순위를 낮춘다.",
+    "검지 바레는 같은 프렛의 여러 줄을 한 손가락으로 처리할 수 있다.",
+    "중간 줄 뮤트는 손가락을 소비하는 것으로 보고, 해당 손가락은 동시에 음을 누를 수 없다고 계산한다.",
+    "7th 계열 코드는 3도와 7도를 guide tone으로 보고, 7도는 생략하지 않는다.",
+    "9th 계열 코드는 7도와 코드명에 적힌 9도를 포함해야 하며, 7도가 빠진 보이싱은 add9로 분류한다.",
+    "11th 계열 코드는 코드명에 적힌 11도와 7도를 포함해야 하며, 자연 11 코드에서는 9도를 함께 유지하는 쪽을 우선한다.",
+    "13th 계열 코드는 7도와 코드명에 적힌 13도를 포함해야 하며, 9도와 11도는 별도로 적혀 있거나 변화음일 때 필수음으로 본다.",
+    "b5, #5, b9, #9, #11, b13처럼 코드명에 변화음이 적힌 경우 해당 변화음은 생략하지 않는다.",
+    "자연 5도는 확장화음에서 가장 먼저 생략 가능한 음으로 본다.",
+    "정렬은 triad/core, shell, fuller voicing 순서이고 같은 종류 안에서는 손가락 수, 뮤트 수, 낮은 포지션 순서로 정렬한다."
+  ]
+}

@@ -1,0 +1,4 @@
+PyQt6>=6.6
+PyQt6-WebEngine>=6.6
+PyGuitarPro>=0.10.2
+Markdown-Editor>=1.0.7

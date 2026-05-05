@@ -1,0 +1,501 @@
+{
+  "version": 1,
+  "language": "ko",
+  "sources": [
+    {
+      "id": "omt_harmonic_functions",
+      "title": "Open Music Theory - Harmonic functions",
+      "url": "https://elliotthauser.com/openmusictheory/harmonicFunctions.html",
+      "license": "CC BY-SA 4.0",
+      "summary": "화음을 tonic, subdominant/predominant, dominant로 나누고 각 기능이 특징적으로 포함하는 음도와 진행 경향을 설명한다."
+    },
+    {
+      "id": "omt_triads",
+      "title": "Open Music Theory - Triads and seventh chords",
+      "url": "https://openmusictheory.github.io/triads.html",
+      "license": "CC BY-SA 4.0",
+      "summary": "코드 품질, 리드 시트 표기, 로마숫자 분석, 장조와 단조의 다이어토닉 3화음 구성을 정리한다."
+    },
+    {
+      "id": "puget_harmonic_function",
+      "title": "Music Theory for the 21st-Century Classroom - Harmonic Function",
+      "url": "https://musictheory.pugetsound.edu/mt21c/HarmonicFunction.html",
+      "license": "Open textbook",
+      "summary": "tonic, dominant, pre-dominant, tonic prolongation의 안정감과 해결 방향, 기본적인 기능 진행을 설명한다."
+    },
+    {
+      "id": "puget_cadences",
+      "title": "Music Theory for the 21st-Century Classroom - Roman Numerals and Cadences",
+      "url": "https://musictheory.pugetsound.edu/mt21c/RomanNumeralsAndCadences.html",
+      "license": "Open textbook",
+      "summary": "로마숫자 분석과 authentic, plagal, deceptive, half cadence 같은 종지 유형을 다룬다."
+    },
+    {
+      "id": "wikipedia_chord_progression",
+      "title": "Wikipedia - Chord progression",
+      "url": "https://en.wikipedia.org/wiki/Chord_progression",
+      "license": "CC BY-SA",
+      "summary": "스케일의 각 음 위에 코드를 쌓을 수 있고, 진행의 화성 기능은 앞뒤 문맥에 의해 결정된다는 관점을 제공한다."
+    },
+    {
+      "id": "fretboard_pentatonic_blues",
+      "title": "Fretboard Foundation - Pentatonic and blues scales",
+      "url": "https://book.fretboardfoundation.com/pentatonic-and-blues-scales.html",
+      "license": "Public web resource",
+      "summary": "펜타토닉과 블루스 스케일이 기타에서 왜 자주 쓰이는지, 블루 노트와 협화적 생략의 관점을 설명한다."
+    },
+    {
+      "id": "omt_phrase_model",
+      "title": "Open Music Theory - Introduction to Harmony, Cadences, and Phrase Endings",
+      "url": "https://pressbooks.nebraska.edu/openmusictheory/chapter/intro-to-harmony/",
+      "license": "CC BY-SA",
+      "summary": "화성 기능과 phrase model을 연결해, 토닉에서 출발해 프리도미넌트와 도미넌트를 거쳐 종지로 가는 큰 방향을 설명한다."
+    },
+    {
+      "id": "puget_circle_fifths",
+      "title": "Music Theory for the 21st-Century Classroom - The Circle of Fifths Progression",
+      "url": "https://musictheory.pugetsound.edu/mt21c/CircleOfFifths.html",
+      "license": "Open textbook",
+      "summary": "5도권 진행과 descending fifth sequence가 긴 inevitability를 만드는 이유를 설명한다."
+    },
+    {
+      "id": "puget_harmonic_rhythm",
+      "title": "Music Theory for the 21st-Century Classroom - Harmonic Rhythm",
+      "url": "https://musictheory.pugetsound.edu/mt21c/HarmonicRhythm.html",
+      "license": "Open textbook",
+      "summary": "각 코드가 얼마나 오래 지속되는지를 harmonic rhythm으로 설명하고, 같은 진행도 리듬 밀도에 따라 다르게 들린다고 설명한다."
+    },
+    {
+      "id": "puget_open_closed_sections",
+      "title": "Music Theory for the 21st-Century Classroom - Harmonically Closed and Open Sections",
+      "url": "https://musictheory.pugetsound.edu/mt21c/HarmonicallyClosedAndOpenSections.html",
+      "license": "Open textbook",
+      "summary": "토닉으로 끝나는 closed section과 비토닉으로 끝나는 open section이 곡의 흐름을 어떻게 만든는지 설명한다."
+    },
+    {
+      "id": "puget_distinctive_riffs",
+      "title": "Music Theory for the 21st-Century Classroom - Distinctive Bass Lines",
+      "url": "https://musictheory.pugetsound.edu/mt21c/DistinctiveBassLines.html",
+      "license": "Open textbook",
+      "summary": "곡의 정체성이 반복되는 bass line 또는 guitar riff에서 생길 수 있다는 점을 설명한다."
+    },
+    {
+      "id": "puget_tonicization",
+      "title": "Music Theory for the 21st-Century Classroom - Tonicization",
+      "url": "https://musictheory.pugetsound.edu/mt21c/Tonicization.html",
+      "license": "Open textbook",
+      "summary": "secondary dominant가 I 이외의 코드를 임시 토닉처럼 강조하며, 크로매틱한 음으로 다음 코드로 가는 힘을 강화한다는 관점을 제공한다."
+    },
+    {
+      "id": "puget_passing_tones",
+      "title": "Music Theory for the 21st-Century Classroom - Passing Tones",
+      "url": "https://musictheory.pugetsound.edu/mt21c/PassingTones.html",
+      "license": "Open textbook",
+      "summary": "코드톤 사이를 지나가는 비화성음을 passing tone으로 설명하고, 다이어토닉/크로매틱 통과음의 가능성을 다룬다."
+    },
+    {
+      "id": "puget_neighbor_tones",
+      "title": "Music Theory for the 21st-Century Classroom - Neighbor Tones",
+      "url": "https://musictheory.pugetsound.edu/mt21c/NeighborTones.html",
+      "license": "Open textbook",
+      "summary": "한 음에서 순차적으로 벗어났다가 다시 돌아오는 장식음을 neighbor tone으로 설명한다."
+    },
+    {
+      "id": "puget_pedal_point",
+      "title": "Music Theory for the 21st-Century Classroom - Pedal Point",
+      "url": "https://musictheory.pugetsound.edu/mt21c/PedalPoint.html",
+      "license": "Open textbook",
+      "summary": "화성이 바뀌는 동안 한 음이 유지되어 처음에는 코드톤이었다가 이후 비화성음처럼 들릴 수 있는 pedal point를 설명한다."
+    },
+    {
+      "id": "puget_jazz_progressions",
+      "title": "Music Theory for the 21st-Century Classroom - Standard Chord Progressions",
+      "url": "https://musictheory.pugetsound.edu/mt21c/StandardChordProgressions.html",
+      "license": "Open textbook",
+      "summary": "재즈에서 ii-V-I, iii-vi-ii-V turnaround, tritone substitution이 어떻게 기능적 방향감을 만드는지 정리한다."
+    },
+    {
+      "id": "omt_modal_mixture",
+      "title": "Open Music Theory - Modal mixture",
+      "url": "https://viva.pressbooks.pub/openmusictheorycopy/chapter/modal-mixture-alt/",
+      "license": "CC BY-SA 4.0",
+      "summary": "parallel major/minor에서 코드를 빌려오는 modal mixture를 chromatic borrowing의 한 형태로 설명한다."
+    },
+    {
+      "id": "omt_chord_scale",
+      "title": "Open Music Theory - Chord-Scale Theory",
+      "url": "https://viva.pressbooks.pub/openmusictheory/chapter/chord-scale-theory/",
+      "license": "CC BY-SA 4.0",
+      "summary": "chord-scale 관계를 설명하면서도, parent scale과 voice leading을 함께 보지 않으면 분석이 조각날 수 있다는 한계를 제시한다."
+    },
+    {
+      "id": "wiki_scale_list",
+      "title": "Wikipedia - List of musical scales and modes",
+      "url": "https://en.wikipedia.org/wiki/List_of_musical_scales_and_modes",
+      "license": "CC BY-SA",
+      "summary": "다양한 스케일과 모드의 pitch-class 구성을 정리한 목록으로, 스케일 후보군과 이름 매칭을 보강하는 데 사용했다."
+    },
+    {
+      "id": "wiki_altered_chord",
+      "title": "Wikipedia - Altered chord",
+      "url": "https://en.wikipedia.org/wiki/Altered_chord",
+      "license": "CC BY-SA",
+      "summary": "altered dominant에서 b5, #5, b9, #9 같은 변화음이 해결력을 강화한다는 설명을 제공한다."
+    }
+  ],
+  "scale_families": {
+    "major": {
+      "mood": "밝고 안정적인 중심감을 만들기 쉬운 장조 계열입니다.",
+      "focus": "1, 3, 5도가 중심음을 세우고 4도와 7도가 진행감을 만듭니다.",
+      "practice_hint": "코드의 루트와 3도를 먼저 찾고, 4도와 7도가 어디로 움직이는지 들어보세요."
+    },
+    "natural minor": {
+      "mood": "단3도와 단6도, 단7도가 어두운 색채를 만드는 기본 단조 계열입니다.",
+      "focus": "1, b3, 5도가 단조 중심을 만들고 b7은 강한 leading tone 대신 완만한 해결감을 줍니다.",
+      "practice_hint": "루트, b3, 5를 먼저 잡고 b6 또는 b7이 리프의 분위기를 어떻게 바꾸는지 확인해보세요."
+    },
+    "harmonic minor": {
+      "mood": "단조 안에 장7도를 넣어 V 또는 vii°가 i로 강하게 해결되도록 만드는 색채입니다.",
+      "focus": "b6에서 7도로 생기는 큰 간격과 7도에서 루트로 가는 끌림이 핵심입니다.",
+      "practice_hint": "V7 또는 diminished 계열 코드가 보이면 harmonic minor 가능성을 의심해보세요."
+    },
+    "locrian natural 6": {
+      "mood": "harmonic minor의 2번째 모드로, diminished 성격에 자연6도가 더해진 불안정한 색채입니다.",
+      "focus": "b2와 b5가 긴장을 만들고 6도가 일반 Locrian보다 조금 더 열린 느낌을 줍니다.",
+      "practice_hint": "m7b5 계열 코드 위에서 harmonic minor의 일부로 쓰이는지 확인해보세요."
+    },
+    "ionian augmented": {
+      "mood": "harmonic minor의 3번째 모드로, 장조 느낌에 #5가 섞인 떠 있는 색채입니다.",
+      "focus": "장3도와 증5도의 조합이 augmented chord와 잘 맞습니다.",
+      "practice_hint": "augmented triad나 maj7#5 계열 코드가 보이면 후보로 보세요."
+    },
+    "dorian #4": {
+      "mood": "harmonic minor의 4번째 모드로, minor/dorian 느낌에 #4가 들어간 날카로운 색채입니다.",
+      "focus": "b3와 #4가 동시에 있어 어두움과 Lydian식 긴장이 함께 납니다.",
+      "practice_hint": "minor 코드 위에서 #4가 반복되면 단순 Dorian보다 이 모드가 더 적절할 수 있습니다."
+    },
+    "phrygian dominant": {
+      "mood": "harmonic minor의 5번째 모드로, 네오클래시컬/플라멩코/메탈에서 매우 자주 쓰이는 강한 dominant 색채입니다.",
+      "focus": "b2와 b6은 Phrygian처럼 어둡지만, 장3도 때문에 V7에서 i로 해결하려는 힘이 강합니다.",
+      "practice_hint": "minor key의 V 또는 V7 코드 위에서 b2, 3, b6, b7이 보이면 harmonic minor의 5번째 모드로 이해하세요."
+    },
+    "lydian #2": {
+      "mood": "harmonic minor의 6번째 모드로, Lydian의 #4에 #2까지 더해진 밝지만 낯선 색채입니다.",
+      "focus": "#2와 #4가 선명하면 일반 Lydian보다 더 긴장된 느낌이 납니다.",
+      "practice_hint": "major/maj7 계열 코드 위에서 #2가 강조되는지 확인해보세요."
+    },
+    "altered diminished": {
+      "mood": "harmonic minor의 7번째 모드로, leading-tone diminished 계열의 강한 불안정감을 만듭니다.",
+      "focus": "b2, b3, b5, b6 같은 음들이 토닉으로 해결되려는 긴장을 만듭니다.",
+      "practice_hint": "vii° 또는 dim7 성격의 빠른 연결 구간인지 확인해보세요."
+    },
+    "melodic minor": {
+      "mood": "단조의 b3는 유지하면서 6도와 7도를 올려 더 매끄럽고 현대적인 긴장을 만듭니다.",
+      "focus": "b3와 6, 7의 조합이 자연단음계보다 밝고 유동적인 느낌을 줍니다.",
+      "practice_hint": "minor-major, altered, Lydian dominant 느낌의 코드 위에서 후보로 확인해보세요."
+    },
+    "major pentatonic": {
+      "mood": "장조에서 반음 충돌이 큰 4도와 7도를 덜어낸 간결하고 안정적인 색채입니다.",
+      "focus": "1, 2, 3, 5, 6도가 멜로디를 명확하게 만들고 코드와 부딪힐 가능성을 줄입니다.",
+      "practice_hint": "컨트리, 팝, 록 멜로디처럼 밝고 직접적인 선율인지 들어보세요."
+    },
+    "minor pentatonic": {
+      "mood": "록과 블루스 기타에서 매우 자주 쓰이는 단조형 5음 스케일입니다.",
+      "focus": "1, b3, 4, 5, b7이 코드 변화 위에서도 비교적 안전하게 작동합니다.",
+      "practice_hint": "리프가 1, b3, 4, 5, b7 주변으로 반복되면 minor pentatonic 중심으로 보세요."
+    },
+    "blues": {
+      "mood": "minor pentatonic에 b5/#4 블루 노트를 더해 의도적인 거친 긴장을 만듭니다.",
+      "focus": "b5는 오래 머무는 안정음이라기보다 4도나 5도로 미끄러지는 장식적 긴장으로 자주 들립니다.",
+      "practice_hint": "b5가 지나가는 음인지, 벤딩이나 슬라이드로 처리되는지 확인하면 블루스 어법을 이해하기 쉽습니다."
+    },
+    "dorian": {
+      "mood": "minor 계열이지만 6도가 올라가 있어 자연단음계보다 열려 있고 덜 어둡습니다.",
+      "focus": "b3가 단조성을 만들고 6도가 Dorian 특유의 밝은 긴장을 만듭니다.",
+      "practice_hint": "minor 코드 위에서 b6 대신 6이 반복적으로 강조되는지 보세요."
+    },
+    "phrygian": {
+      "mood": "minor 계열에 b2가 더해져 강한 스페인/메탈 느낌의 압박감을 만듭니다.",
+      "focus": "b2가 루트 바로 위에서 강한 마찰을 만들며 루트로 내려가려는 힘을 냅니다.",
+      "practice_hint": "루트와 b2가 반음으로 맞붙는 리프인지 확인해보세요."
+    },
+    "lydian": {
+      "mood": "major 계열에 #4가 더해져 떠 있는 듯한 밝은 긴장을 만듭니다.",
+      "focus": "#4는 장조의 4도보다 루트와 덜 전통적인 해결감을 만들며, maj7 또는 add9 코드와 잘 어울립니다.",
+      "practice_hint": "major 코드 위에서 4도 대신 #4가 선명하게 들리는지 찾아보세요."
+    },
+    "mixolydian": {
+      "mood": "major 계열에 b7이 들어가 dominant, 록, 블루스 느낌을 만들기 쉽습니다.",
+      "focus": "3도는 밝은 장조성을 유지하고 b7은 I보다 IV나 bVII 쪽으로 열리는 느낌을 줍니다.",
+      "practice_hint": "major 코드인데 7도가 장7도보다 b7로 들리면 Mixolydian 후보입니다."
+    },
+    "locrian": {
+      "mood": "minor 계열에 b2와 b5가 들어가 가장 불안정한 다이어토닉 모드입니다.",
+      "focus": "b5 때문에 루트 화음이 diminished 성격을 띠어 중심을 오래 유지하기 어렵습니다.",
+      "practice_hint": "m7b5 또는 diminished 계열 코드 위의 짧은 통과 구간인지 확인해보세요."
+    },
+    "lydian dominant": {
+      "mood": "Lydian의 #4와 dominant의 b7이 같이 있는 밝지만 강한 긴장 색채입니다.",
+      "focus": "3도와 b7이 dominant 기능을 만들고 #4는 11th 계열의 날카로운 색을 줍니다.",
+      "practice_hint": "7#11, 9#11, 13#11 코드 위에서 루트-3-b7을 먼저 확인한 뒤 #4/#11을 색채음으로 들어보세요."
+    },
+    "altered": {
+      "mood": "dominant 7의 3도와 b7은 남기고 5도와 9도 계열을 모두 긴장음으로 바꾼 매우 불안정한 색채입니다.",
+      "focus": "b9, #9, b5/#11, #5/b13이 다음 토닉 또는 minor chord로 해결되려는 압력을 만듭니다.",
+      "practice_hint": "7alt, 7b9, 7#9, 7#5 같은 코드가 다음 코드로 강하게 밀고 가는지 확인하세요."
+    },
+    "dorian b2": {
+      "mood": "melodic minor의 2번째 모드로, Dorian의 열린 6도에 Phrygian식 b2 긴장이 섞입니다.",
+      "focus": "b2와 b3가 어둡게 시작하지만 6도가 있어서 자연단음계보다 덜 닫힌 느낌을 줍니다.",
+      "practice_hint": "minor 계열인데 b2와 6도가 동시에 반복되면 이 모드를 후보로 보세요."
+    },
+    "lydian augmented": {
+      "mood": "Lydian의 #4와 augmented의 #5가 함께 있는 떠 있는 장조 색채입니다.",
+      "focus": "3도, #4, #5, 7도가 maj7#5 또는 maj9#5 계열의 색을 분명하게 만듭니다.",
+      "practice_hint": "maj7#5, augMaj7, 장조 코드 위의 #5가 선명할 때 확인하세요."
+    },
+    "mixolydian b6": {
+      "mood": "Mixolydian의 dominant 성격에 b6의 어두운 색이 추가된 모드입니다.",
+      "focus": "3도와 b7은 dominant를 유지하고 b6은 다음 minor 또는 borrowed 색채로 넘어갈 여지를 줍니다.",
+      "practice_hint": "7, 9, 13 계열 코드 위에서 13 대신 b13이 들리는지 비교해보세요."
+    },
+    "locrian #2": {
+      "mood": "half-diminished 코드에 잘 맞는 Locrian 변형으로, b2 대신 2도가 있어 조금 더 매끄럽습니다.",
+      "focus": "b3, b5, b7이 m7b5를 만들고 2도와 4도가 선율적 연결음을 제공합니다.",
+      "practice_hint": "m7b5 코드가 iiø처럼 V로 이어지는지 보면서 후보로 확인하세요."
+    },
+    "harmonic major": {
+      "mood": "장조의 안정감에 b6이 들어가 밝음과 고전적인 어두움이 동시에 납니다.",
+      "focus": "3도와 7도는 장조 중심을 세우고 b6은 iv 또는 diminished 계열 색채를 암시합니다.",
+      "practice_hint": "major 계열인데 b6이 반복되거나 iv minor 느낌이 나면 확인하세요."
+    },
+    "double harmonic": {
+      "mood": "b2와 b6, 장3도와 장7도가 함께 있어 중동풍/네오클래시컬 느낌이 강한 스케일입니다.",
+      "focus": "b2-3, b6-7 사이의 큰 간격이 강한 장식성과 긴장을 만듭니다.",
+      "practice_hint": "루트 주변 b2와 장3도가 같이 들리고, 7도에서 루트로 강하게 끌리면 후보로 보세요."
+    },
+    "hungarian minor": {
+      "mood": "harmonic minor에 #4가 더해져 단조와 증4도의 날카로움이 함께 납니다.",
+      "focus": "b3, #4, b6, 7이 어두운 중심과 강한 이국적 긴장을 만듭니다.",
+      "practice_hint": "minor 리프에서 #4가 구조적으로 반복되는지 확인하세요."
+    },
+    "ukrainian dorian": {
+      "mood": "Dorian에 #4가 더해진 형태로, 단조 리프에 Lydian식 날카로움이 섞입니다.",
+      "focus": "b3와 6이 Dorian 성격을 만들고 #4가 긴장과 방향감을 더합니다.",
+      "practice_hint": "minor/dorian 구간에서 #4가 passing tone인지 핵심음인지 구분해보세요."
+    },
+    "whole tone": {
+      "mood": "모든 간격이 온음이라 중심과 해결감이 흐릿하고 부유하는 색채가 납니다.",
+      "focus": "3도, #4, #5, b7이 augmented dominant 또는 7#5 계열과 잘 맞습니다.",
+      "practice_hint": "증5도/온음 진행이 반복되면 일반 장단조보다 whole tone 후보를 보세요."
+    },
+    "diminished half-whole": {
+      "mood": "dominant 위에서 b9, #9, #11, 13을 만드는 대칭 스케일입니다.",
+      "focus": "반음-온음 반복 구조가 dominant의 해결력을 극대화하면서도 패턴성이 강합니다.",
+      "practice_hint": "7b9, 13b9, 7#9 같은 코드에서 diminished 패턴이 반복되는지 보세요."
+    },
+    "diminished whole-half": {
+      "mood": "diminished 7th 계열 코드와 잘 맞는 대칭 스케일입니다.",
+      "focus": "단3도 간격으로 반복되는 diminished 구조가 빠른 연결과 긴장감을 만듭니다.",
+      "practice_hint": "dim7 아르페지오가 반음 또는 단3도 단위로 이동하는지 확인하세요."
+    },
+    "major blues": {
+      "mood": "major pentatonic에 b3 블루 노트를 더해 밝은 코드 위에 블루스적 마찰을 줍니다.",
+      "focus": "3도와 b3가 공존하면 정확한 장단조보다 벤딩, 슬라이드, 장식음 문맥이 중요합니다.",
+      "practice_hint": "b3가 오래 머무는지, 3도로 밀어 올리는 장식인지 들어보세요."
+    },
+    "hirajoshi": {
+      "mood": "반음과 넓은 도약이 섞인 5음 스케일로, 간결하지만 긴장된 동양적 색채가 납니다.",
+      "focus": "3, #4, 5, 7의 배열이 장조/단조로 바로 환원되지 않는 색을 만듭니다.",
+      "practice_hint": "펜타토닉처럼 음 수가 적지만 일반 major/minor pentatonic과 음 위치가 다른지 확인하세요."
+    },
+    "insen": {
+      "mood": "b2와 4, 5, b7 중심의 5음 스케일로, 여백이 많고 어두운 장식성이 납니다.",
+      "focus": "루트 바로 위의 b2와 4도 도약이 일반 minor pentatonic과 다른 느낌을 만듭니다.",
+      "practice_hint": "루트-b2-4 같은 움직임이 반복되면 후보로 보세요."
+    },
+    "neapolitan minor": {
+      "mood": "b2가 있는 단조에 장7도가 더해져 어둡지만 강한 종지감을 만듭니다.",
+      "focus": "b2, b3, b6, 7의 조합이 Phrygian과 harmonic minor 사이의 색채를 냅니다.",
+      "practice_hint": "minor 중심에서 b2와 7도가 모두 구조적으로 쓰이는지 확인하세요."
+    },
+    "neapolitan major": {
+      "mood": "b2와 b3로 어둡게 시작하지만 6도와 7도가 열린 방향감을 주는 스케일입니다.",
+      "focus": "초반은 Phrygian minor처럼 들리지만 상행부의 6, 7이 더 밝은 긴장을 만듭니다.",
+      "practice_hint": "b2/b3가 있으면서도 6도와 7도가 분명하면 natural minor로만 보지 마세요."
+    },
+    "persian": {
+      "mood": "b2, 3, 4, b5, b6, 7이 만든 강한 반음 마찰과 이국적 긴장이 특징입니다.",
+      "focus": "루트 주변 b2와 장3도, b5가 동시에 있어 안정 코드보다 색채 리프에 가깝게 들립니다.",
+      "practice_hint": "장3도와 b2/b5가 동시에 반복되면 double harmonic과 함께 비교하세요."
+    },
+    "prometheus": {
+      "mood": "whole tone 기반에 5도 대신 6도와 b7이 강조되는 현대적/부유하는 색채입니다.",
+      "focus": "1, 2, 3, #4, 6, b7이 Lydian dominant보다 5도 안정감을 덜 줍니다.",
+      "practice_hint": "dominant 색은 있는데 5도가 비어 있고 #4와 6이 선명한지 확인하세요."
+    },
+    "quartal": {
+      "mood": "3도 쌓기보다 4도 관계가 중심이 되어 모던하고 열린 화음을 만듭니다.",
+      "focus": "루트-4-b7 구조가 sus, quartal voicing, modal harmony와 잘 연결됩니다.",
+      "practice_hint": "코드가 장/단3도를 명확히 말하지 않고 4도 간격으로 움직이는지 보세요."
+    }
+  },
+  "functions": {
+    "tonic": {
+      "label": "토닉",
+      "meaning": "안정과 귀착점 역할을 합니다. 진행이 잠시 멈추거나 중심으로 돌아온 느낌을 줍니다."
+    },
+    "tonic_prolongation": {
+      "label": "토닉 연장",
+      "meaning": "토닉과 공통음이 많아 안정감을 유지하면서 다음 기능으로 넘어갈 시간을 벌어줍니다."
+    },
+    "predominant": {
+      "label": "프리도미넌트",
+      "meaning": "도미넌트로 가기 전 긴장을 준비하는 역할입니다. ii, IV 계열이 대표적입니다."
+    },
+    "dominant": {
+      "label": "도미넌트",
+      "meaning": "토닉으로 해결하려는 힘이 강한 역할입니다. V, V7, vii° 계열이 대표적입니다."
+    },
+    "modal_color": {
+      "label": "모달/색채",
+      "meaning": "전통적인 기능 진행보다 리프, 공통음, 모드 특유의 음색으로 방향감을 만드는 경우입니다."
+    },
+    "chromatic": {
+      "label": "크로매틱/차용",
+      "meaning": "현재 추정 스케일 밖의 음을 포함해 순간적인 색채, 전조 암시, secondary dominant 같은 효과를 만들 수 있습니다."
+    }
+  },
+  "chord_families": {
+    "major": {
+      "color": "장3도와 완전5도가 중심을 안정적으로 세우는 기본 장화음 계열입니다.",
+      "listen": "3도가 밝은 성격을 결정하므로 루트와 3도의 위치를 먼저 확인하세요."
+    },
+    "minor": {
+      "color": "단3도가 중심인 단화음 계열로, minor scale, dorian, phrygian 같은 색채와 연결됩니다.",
+      "listen": "b3가 오래 머무는지, 6도와 b6 중 어느 쪽이 더 자주 나오는지 들으면 스케일 구분이 쉬워집니다."
+    },
+    "dominant": {
+      "color": "장3도와 b7이 함께 있어 다음 중심으로 해결하려는 힘이 큰 dominant 계열입니다.",
+      "listen": "3도와 b7을 guide tone으로 잡고, 다음 코드로 반음 또는 온음 해결되는지 보세요."
+    },
+    "altered_dominant": {
+      "color": "dominant 7의 3도/b7에 b9, #9, b5/#11, #5/b13 같은 변화음이 더해져 해결 압력이 강합니다.",
+      "listen": "변화음은 오래 안정되는 음이라기보다 다음 코드톤으로 풀리기 위한 긴장으로 듣는 편이 좋습니다."
+    },
+    "suspended": {
+      "color": "3도를 잠시 숨기고 2도나 4도로 긴장을 유지하는 suspended 계열입니다.",
+      "listen": "sus4가 3도로 해결되는지, 아니면 modal color로 계속 유지되는지 확인하세요."
+    },
+    "diminished": {
+      "color": "단3도와 감5도 구조가 만든 불안정한 코드로, 통과/leading-tone/secondary diminished 역할이 많습니다.",
+      "listen": "반음 위나 아래의 안정 코드로 빠르게 연결되는지 보세요."
+    },
+    "augmented": {
+      "color": "장3도와 증5도가 만든 대칭적이고 떠 있는 색채입니다.",
+      "listen": "#5가 다음 코드의 3도나 루트로 이동하는지 확인하세요."
+    },
+    "extended": {
+      "color": "9, 11, 13 같은 확장음이 들어가 단순 triad보다 더 많은 스케일 색을 노출합니다.",
+      "listen": "루트/3도/7도는 기능을, 9/11/13은 색채를 담당하는 경우가 많습니다."
+    },
+    "added_tone": {
+      "color": "기본 triad에 9나 11 같은 음을 더해 기능은 유지하면서 색채만 넓힌 코드입니다.",
+      "listen": "추가음이 다음 음으로 해결되는지, 코드 색으로 그대로 남는지 확인하세요."
+    },
+    "quartal": {
+      "color": "4도 간격을 쌓은 화성으로 장단조 기능보다 모달한 공간감을 만드는 경우가 많습니다.",
+      "listen": "3도가 없거나 약하면 장/단조 판정보다 반복 루트와 스케일 색채가 더 중요합니다."
+    },
+    "power": {
+      "color": "루트와 5도만 있는 코드라 장/단조 정보가 비어 있습니다.",
+      "listen": "장단조는 코드 자체보다 멜로디의 3도/b3 또는 주변 스케일에서 판단해야 합니다."
+    }
+  },
+  "analysis_concepts": {
+    "candidate_confidence": "1순위와 2순위 점수 차가 작으면 이론적으로 여러 해석이 가능한 구간입니다. 이때는 한 마디만 보지 말고 앞뒤 마디, 반복 패턴, 전체 중심 스케일을 같이 봐야 합니다.",
+    "chord_scale": "chord-scale 분석은 현재 코드 위에 어울리는 스케일을 찾는 데 유용하지만, 모든 코드를 독립된 조성처럼 보면 voice leading과 parent scale 흐름을 놓칠 수 있습니다.",
+    "guide_tones": "재즈/확장화음에서는 루트보다 3도와 7도가 코드 기능을 더 선명하게 말해주는 경우가 많습니다. 3도는 장단, 7도는 dominant/major/minor 7 성격을 구분합니다.",
+    "non_chord_tones": "스케일 또는 코드 밖의 음은 오류라기보다 passing tone, neighbor tone, anticipation, pedal point, bend/slide 같은 표현일 수 있습니다.",
+    "secondary_dominant": "major triad나 dominant 7th가 현재 토닉이 아닌 다른 다이어토닉 코드를 향해 5도권으로 진행하면 secondary dominant처럼 들릴 수 있습니다.",
+    "modal_mixture": "parallel major/minor에서 빌린 bIII, iv, bVI, bVII 같은 코드는 기능 진행 안에 다른 모드의 색을 섞는 modal mixture로 볼 수 있습니다.",
+    "altered_dominant": "altered dominant는 b5/#5/b9/#9 같은 변화음으로 해결 직전의 긴장을 크게 만들며, 보통 다음 안정 코드로 풀릴 때 의미가 분명해집니다.",
+    "tritone_substitution": "dominant 7th끼리는 3도와 b7이 트라이톤으로 공유될 수 있어, V7 대신 bII7이 들어가 반음 하행 베이스와 강한 해결감을 만들 수 있습니다.",
+    "pedal_point": "같은 루트 또는 5도가 오래 유지되면 위의 코드가 바뀌어도 리프 중심성이 강해지고, 그 음은 순간적으로 비화성음처럼 들릴 수 있습니다.",
+    "modulation": "새 스케일/코드 후보가 여러 마디 동안 유지되고 종지까지 형성하면 단순 차용보다 전조 또는 tonicization 가능성이 커집니다.",
+    "phrase_closure": "구간 끝이 토닉이면 닫힌 느낌이 강하고, 도미넌트/비토닉이면 다음 구간으로 넘어가려는 열린 느낌이 남습니다.",
+    "riff_harmony": "기타 중심 음악에서는 코드 기능보다 반복되는 운지 패턴, 페달 루트, 공통음, 스케일 블럭의 물리적 움직임이 진행감을 만들 수 있습니다."
+  },
+  "progression_ideas": [
+    {
+      "id": "tonic_to_dominant",
+      "from": "tonic",
+      "to": "dominant",
+      "explanation": "안정된 중심에서 긴장으로 이동합니다. 질문을 던지는 느낌이라 다음에 토닉 해결을 기대하게 만듭니다."
+    },
+    {
+      "id": "predominant_to_dominant",
+      "from": "predominant",
+      "to": "dominant",
+      "explanation": "긴장을 준비한 뒤 더 강한 긴장으로 밀어 올리는 전형적인 기능 진행입니다."
+    },
+    {
+      "id": "dominant_to_tonic",
+      "from": "dominant",
+      "to": "tonic",
+      "explanation": "긴장이 중심으로 풀리는 가장 직접적인 해결입니다. 종지감이나 문장 끝 느낌이 생깁니다."
+    },
+    {
+      "id": "tonic_prolongation",
+      "from": "tonic",
+      "to": "tonic_prolongation",
+      "explanation": "중심감을 유지하면서 색을 바꾸는 진행입니다. 완전히 떠나기 전의 연결부처럼 들릴 수 있습니다."
+    },
+    {
+      "id": "modal_shift",
+      "from": "modal_color",
+      "to": "modal_color",
+      "explanation": "기능적 해결보다 공통음, 루트 반복, 리프 패턴으로 연속성을 만드는 진행입니다."
+    }
+  ],
+  "cadences": {
+    "authentic": "V 또는 vii°에서 I/i로 가면 강한 authentic cadence 성격이 납니다.",
+    "plagal": "IV에서 I/i로 가면 부드러운 plagal cadence 성격이 납니다.",
+    "deceptive": "V에서 vi 또는 VI로 가면 기대한 토닉 해결을 비껴가는 deceptive cadence 성격이 납니다.",
+    "half": "구간이 V에서 멈추면 아직 끝나지 않은 half cadence 느낌이 납니다."
+  },
+  "roman_function_map": {
+    "major": {
+      "I": "tonic",
+      "ii": "predominant",
+      "iii": "tonic_prolongation",
+      "IV": "predominant",
+      "V": "dominant",
+      "vi": "tonic_prolongation",
+      "vii°": "dominant"
+    },
+    "minor": {
+      "i": "tonic",
+      "ii°": "predominant",
+      "III": "tonic_prolongation",
+      "iv": "predominant",
+      "v": "dominant",
+      "V": "dominant",
+      "VI": "tonic_prolongation",
+      "VII": "modal_color",
+      "vii°": "dominant"
+    }
+  },
+  "song_progression_concepts": {
+    "phrase_model": "곡 전체를 볼 때는 개별 코드 이름보다 기능의 흐름이 중요합니다. 일반적인 phrase model은 토닉의 안정감에서 출발해 프리도미넌트가 긴장을 준비하고, 도미넌트가 해결을 요구한 뒤 토닉으로 닫히는 큰 방향을 가집니다.",
+    "harmonic_rhythm": "화성 리듬은 코드가 얼마나 자주 바뀌는지입니다. 같은 코드 진행도 한 마디에 하나씩 바뀌면 넓게 들리고, 한 마디 안에서 여러 번 바뀌면 더 추진력 있게 들립니다.",
+    "circle_of_fifths": "루트가 4도 위 또는 5도 아래로 이어지는 진행은 5도권 진행으로 들리기 쉽고, 반복될수록 다음 코드가 자연스럽게 예견되는 느낌을 만듭니다.",
+    "open_closed_sections": "구간이 토닉으로 끝나면 닫힌 느낌이 강하고, 도미넌트나 다른 비토닉 코드에서 끝나면 다음 구간으로 넘어가려는 열린 느낌이 남습니다.",
+    "riff_based_harmony": "기타 중심 음악에서는 코드 기능만큼 반복 리프와 공통음이 중요합니다. 같은 루트나 같은 펜타토닉 재료가 반복되면 기능 진행보다 리프의 정체성이 더 크게 들릴 수 있습니다.",
+    "tonicization": "짧게 나타난 크로매틱 dominant가 바로 다음 다이어토닉 코드를 향하면 전조라기보다 tonicization, 즉 그 코드를 잠깐 중심처럼 비추는 현상일 수 있습니다.",
+    "modal_mixture": "bIII, iv, bVI, bVII처럼 parallel minor/major에서 온 듯한 코드가 반복되면 전체 키는 유지하면서 색채만 빌려온 modal mixture로 설명할 수 있습니다.",
+    "jazz_turnaround": "iii-vi-ii-V 또는 I-vi-ii-V 계열은 정적인 토닉 자리를 움직임으로 채워 다음 구간의 I로 돌아가게 만드는 turnaround로 볼 수 있습니다.",
+    "tritone_substitution": "bII7이 V7 자리에 나타나면 3도와 b7의 guide tone을 공유하는 tritone substitution으로 볼 수 있고, 베이스가 반음으로 내려가며 해결감을 만듭니다.",
+    "scale_stability": "같은 스케일 후보가 여러 마디에서 반복되면 곡의 parent scale로 볼 수 있고, 짧게만 나타나는 다른 후보는 코드-스케일 색채 또는 장식음 때문일 수 있습니다."
+  }
+}

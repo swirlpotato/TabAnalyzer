@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>메모 - Tab Analyzer Manual</title>
+  <link rel="stylesheet" href="manual_style.css">
+</head>
+<body>
+<main>
+  <a class="back" href="manual.html">Go to the main page</a>
+  <h1>메모</h1>
+  <p>각 마디마다 Markdown 메모를 작성할 수 있습니다. 편집 영역 오른쪽에서 Markdown 미리보기를 확인할 수 있습니다.</p>
+  <ul>
+    <li><code>Ctrl+S</code>: 메모 저장</li>
+    <li><code>Ctrl+L</code>: 메모 불러오기</li>
+    <li>File 메뉴: 메모 저장, 메모 다른이름으로 저장, 메모 불러오기</li>
+  </ul>
+  <p>기본 저장 파일은 원본 탭 파일과 같은 폴더의 <code>memo_원본파일명.mmdx</code>입니다. <code>.mmdx</code>는 ZIP 기반 형식이며, 마디별로 <code>M1.md</code>, <code>M25.md</code>처럼 파일이 분리됩니다.</p>
+  <p>Markdown 이미지가 로컬 파일을 참조하면 저장할 때 해당 이미지가 <code>.mmdx</code> 안에 함께 포함됩니다.</p>
+  <p>메모 입력 중에는 전체 악보 표시 갱신을 5초 단위로 제한해 입력 지연을 줄입니다. 자동저장은 10초마다 실행됩니다.</p>
+</main>
+</body>
+</html>
