@@ -37,16 +37,16 @@ The right explanation pane summarizes the whole song: estimated tonal center, re
 
 ## Tab player
 
-The main score area has a `타브 플레이어` tab. It shows Guitar Pro-style tablature measures and adds MIDI playback controls:
+The main score area has a `Tab player` tab. It shows Guitar Pro-style tablature measures and adds MIDI playback controls:
 
 - select a measure, or Shift-click another measure to select a range
-- enable `선택 반복` to loop the selected measure range
+- enable `Repeat selection` to loop the selected measure range
 - change playback speed from 50% to 200%
-- enable `메트로놈` to play a MIDI click that follows the playback speed
+- enable `Metronome` to play a MIDI click that follows the playback speed
 - use the tab zoom slider to enlarge or shrink the tablature view
-- use the right-side `녹음` tab for recording, recording playback, practice metronome controls, and recorded WAV history
+- use the right-side `Recording` tab for recording, recording playback, practice metronome controls, and recorded WAV history
 
-Selecting a tab block updates the lower `마디설명` tab with how to play the selected frets, strings, rhythm, and detected techniques. The tab-reading explanations are backed by `data/tab_reading_knowledge.json`, which summarizes public tab-notation references.
+Selecting a tab block updates the lower `Measure notes` tab with how to play the selected frets, strings, rhythm, and detected techniques. The tab-reading explanations are backed by `data/tab_reading_knowledge.json`, which summarizes public tab-notation references.
 
 ## Measure memos
 
@@ -63,3 +63,7 @@ Standard, Drop D, Half-Step Down, D Standard, Drop C, DADGAD, Open G, Open D, Op
 ```powershell
 python -m unittest discover
 ```
+
+## Screenshots
+![Image](docs/screenshot_tabanalyze.png)
+![Image](docs/screenshot_tabplay.png)
