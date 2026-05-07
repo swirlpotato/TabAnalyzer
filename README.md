@@ -4,6 +4,10 @@ PyQt6 desktop app for reading Guitar Pro files and estimating scale/chord candid
 
 Current version: `0.2`.
 
+## Screenshots
+![Image](docs/screenshot_tabanalyze.png)
+![Image](docs/screenshot_tabplay.png)
+
 ## Run
 
 ```powershell
@@ -63,7 +67,3 @@ Standard, Drop D, Half-Step Down, D Standard, Drop C, DADGAD, Open G, Open D, Op
 ```powershell
 python -m unittest discover
 ```
-
-## Screenshots
-![Image](docs/screenshot_tabanalyze.png)
-![Image](docs/screenshot_tabplay.png)
