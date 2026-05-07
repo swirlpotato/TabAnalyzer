@@ -1,6 +1,7 @@
 import unittest
 
 from tab_analyzer.analysis import Candidate
+from tab_analyzer.i18n import tr
 from tab_analyzer.theory import TheoryExplainer
 
 from tests.helpers import theory_fixture_song
@@ -39,9 +40,9 @@ class TheoryExplainerTests(unittest.TestCase):
 
         html = TheoryExplainer().explain_tab_selection(song, 0, 1)
 
-        self.assertIn("타브 연주 설명", html)
-        self.assertIn("선택 범위", html)
-        self.assertIn("앞부분 순서", html)
+        self.assertIn(tr("Tab playing explanation"), html)
+        self.assertIn(tr("Selection"), html)
+        self.assertIn(tr("Opening order"), html)
         self.assertIn("<html>", html)
 
     def test_scale_confidence_collapses_equivalent_modes(self):

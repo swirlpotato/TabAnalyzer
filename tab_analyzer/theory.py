@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .analysis import Candidate, analyze_pitch_classes, candidate_display_name, interval_name, pitch_class_name
 from .gp_loader import MeasureData, SegmentData, SongData
+from .i18n import tr
 from .tab_knowledge import TabReadingKnowledge
 
 
@@ -65,13 +66,16 @@ class TheoryExplainer:
         segment: SegmentData | None,
     ) -> str:
         if song is None:
-            return self._page("화성 설명", ["Guitar Pro 파일을 열면 선택한 마디의 스케일, 코드, 기능 진행을 설명합니다."])
+            return self._page(
+                tr("Harmony explanation"),
+                [tr("Open a Guitar Pro file to explain the selected measure scale, chord, and functional movement.")],
+            )
         if measure is None:
             return self._page(
-                "화성 설명",
+                tr("Harmony explanation"),
                 [
-                    f"{html.escape(song.title)}을 불러왔습니다.",
-                    "상단 탭의 마디 또는 구간별 스케일/코드 표시를 누르면 이곳에 분석 이유가 표시됩니다."
+                    tr("{title} was loaded.").format(title=html.escape(song.title)),
+                    tr("Click a measure or segment scale/chord label in the upper tab to show the analysis reasons here."),
                 ],
             )
 
@@ -99,18 +103,18 @@ class TheoryExplainer:
     def explain_song(self, song: SongData | None) -> str:
         if song is None:
             return self._page(
-                "전체 곡 진행",
+                tr("Whole-song progression"),
                 [
-                    "파일을 열면 곡 전체의 중심 스케일, 반복 진행, 화성 리듬, 기능 분포, 열린/닫힌 구간을 요약합니다.",
-                    "오른쪽 창은 큰 지도이고, 아래 설명 창은 선택한 마디를 확대해서 보는 공간입니다.",
+                    tr("Open a file to summarize the song central scale, repeated progressions, harmonic rhythm, function distribution, and open/closed sections."),
+                    tr("The right pane is the overview map, and the lower explanation pane zooms into the selected measure."),
                 ],
             )
 
         raw_events = self._song_events(song, None)
         if not raw_events:
             return self._page(
-                f"{song.title}: 전체 곡 진행",
-                ["분석할 음이 있는 마디가 아직 없습니다."],
+                tr("{title}: Whole-song progression").format(title=song.title),
+                [tr("There are not yet any measures with notes to analyze.")],
                 self._source_links(),
             )
 
@@ -129,7 +133,7 @@ class TheoryExplainer:
         paragraphs.extend(self._song_repeated_patterns(events, prefer_flats))
         paragraphs.extend(self._song_section_closure(song, events, prefer_flats))
         paragraphs.extend(self._song_timeline(song, events, prefer_flats))
-        return self._page(f"{song.title}: 전체 곡 진행", paragraphs, self._source_links())
+        return self._page(tr("{title}: Whole-song progression").format(title=song.title), paragraphs, self._source_links())
 
     def _song_events(self, song: SongData, global_scale: Candidate | None) -> list[SongEvent]:
         events: list[SongEvent] = []
@@ -223,11 +227,16 @@ class TheoryExplainer:
         prefer_flats: bool | None,
     ) -> list[str]:
         active_measures = len({event.measure_number for event in events})
-        scale_text = candidate_display_name(global_scale, prefer_flats) if global_scale else "미확정"
+        scale_text = candidate_display_name(global_scale, prefer_flats) if global_scale else tr("Undetermined")
         concepts = self.data.get("song_progression_concepts", {})
         overview = [
-            f"<b>큰 중심</b>: 전체 {len(song.track.measures)}마디 중 음이 있는 마디는 {active_measures}마디입니다. 가장 많이 지지된 중심 스케일은 <b>{html.escape(scale_text)}</b>입니다.",
-            f"<b>분석 관점</b>: {html.escape(concepts.get('phrase_model', '곡 전체는 개별 코드보다 기능 흐름으로 보면 이해하기 쉽습니다.'))}",
+            f"<b>{tr('Main center')}</b>: "
+            + tr("Across {measure_count} measures, {active_measures} measures contain notes. The most-supported central scale is <b>{scale}</b>.").format(
+                measure_count=len(song.track.measures),
+                active_measures=active_measures,
+                scale=html.escape(scale_text),
+            ),
+            f"<b>{tr('Analysis view')}</b>: {html.escape(concepts.get('phrase_model', tr('The whole song is easier to understand through functional flow than isolated chords.')))}",
         ]
         if global_scale is not None:
             overview.append(self._scale_parent_explanation(global_scale, self._scale_family(global_scale.name), prefer_flats))
@@ -245,7 +254,7 @@ class TheoryExplainer:
 
         counts = Counter(candidate_display_name(scale, prefer_flats) for scale in scales)
         top = counts.most_common(5)
-        top_text = ", ".join(f"{html.escape(name)} {count}회" for name, count in top)
+        top_text = ", ".join(f"{html.escape(name)} x{count}" for name, count in top)
         changes = 0
         previous_name = ""
         for scale in scales:
@@ -258,11 +267,20 @@ class TheoryExplainer:
         if global_scale is not None:
             global_name = candidate_display_name(global_scale, prefer_flats)
             support = counts.get(global_name, 0)
-            global_text = f" 전체 중심으로 잡힌 {html.escape(global_name)}는 감지 구간 중 {support}회 직접 등장합니다."
+            global_text = tr(" The global center {name} appears directly in {count} detected segments.").format(
+                name=html.escape(global_name),
+                count=support,
+            )
 
         concept = self.data.get("song_progression_concepts", {}).get("scale_stability", "")
         return [
-            f"<b>스케일 분포</b>: {top_text}. 스케일 이름이 바뀐 지점은 약 {changes}회입니다.{global_text} {html.escape(concept)}"
+            f"<b>{tr('Scale distribution')}</b>: "
+            + tr("{top}. The scale name changes about {changes} times.{global_text} {concept}").format(
+                top=top_text,
+                changes=changes,
+                global_text=global_text,
+                concept=html.escape(concept),
+            )
         ]
 
     def _song_chord_palette(self, events: list[SongEvent], prefer_flats: bool | None) -> list[str]:
@@ -271,42 +289,52 @@ class TheoryExplainer:
             return []
 
         counts = Counter(candidate_display_name(chord, prefer_flats) for chord in chords)
-        top_text = ", ".join(f"{html.escape(name)} {count}회" for name, count in counts.most_common(6))
+        top_text = ", ".join(f"{html.escape(name)} x{count}" for name, count in counts.most_common(6))
         family_counts: Counter[str] = Counter(self._chord_family(chord) for chord in chords)
         family_labels = {
-            "major": "major",
-            "minor": "minor",
-            "dominant": "dominant",
-            "altered_dominant": "altered dominant",
-            "suspended": "sus",
-            "diminished": "diminished",
-            "augmented": "augmented",
-            "extended": "extended",
-            "added_tone": "add",
-            "quartal": "quartal",
-            "power": "power",
+            "major": tr("major"),
+            "minor": tr("minor"),
+            "dominant": tr("dominant"),
+            "altered_dominant": tr("altered dominant"),
+            "suspended": tr("sus"),
+            "diminished": tr("diminished"),
+            "augmented": tr("augmented"),
+            "extended": tr("extended"),
+            "added_tone": tr("add"),
+            "quartal": tr("quartal"),
+            "power": tr("power"),
         }
         family_text = ", ".join(
-            f"{family_labels.get(family, family)} {count}회"
+            f"{family_labels.get(family, family)} x{count}"
             for family, count in family_counts.most_common()
         )
         guide_concept = self._concept("guide_tones")
         return [
-            f"<b>코드 팔레트</b>: 자주 나온 후보는 {top_text}입니다. 성격별로는 {html.escape(family_text)}가 보입니다. {html.escape(guide_concept)}"
+            f"<b>{tr('Chord palette')}</b>: "
+            + tr("Frequent candidates are {top}. By character, {families} appears. {concept}").format(
+                top=top_text,
+                families=html.escape(family_text),
+                concept=html.escape(guide_concept),
+            )
         ]
 
     def _song_harmonic_rhythm(self, song: SongData, events: list[SongEvent]) -> list[str]:
         active_measures = max(1, len({event.measure_number for event in events}))
         changes_per_measure = len(events) / active_measures
         if changes_per_measure < 1.25:
-            density = "대체로 한 마디 안에서 화성이 천천히 유지됩니다."
+            density = tr("Harmony mostly stays stable within each measure.")
         elif changes_per_measure < 2.25:
-            density = "한 마디 안에서 가끔 코드/스케일이 바뀌는 중간 밀도입니다."
+            density = tr("This is medium density where chords/scales sometimes change within a measure.")
         else:
-            density = "한 마디 안에서도 변화가 자주 생기는 빠른 화성 리듬입니다."
+            density = tr("This is a fast harmonic rhythm with frequent changes within a measure.")
         concept = self.data.get("song_progression_concepts", {}).get("harmonic_rhythm", "")
         return [
-            f"<b>화성 리듬</b>: 음이 있는 마디 기준 평균 {changes_per_measure:.2f}개의 화성 구간이 감지됩니다. {html.escape(density)} {html.escape(concept)}"
+            f"<b>{tr('Harmonic rhythm')}</b>: "
+            + tr("Measures with notes average {changes:.2f} harmonic segments. {density} {concept}").format(
+                changes=changes_per_measure,
+                density=html.escape(density),
+                concept=html.escape(concept),
+            )
         ]
 
     def _song_function_distribution(self, events: list[SongEvent]) -> list[str]:
@@ -318,16 +346,16 @@ class TheoryExplainer:
             role_counts[event.role.function_id] += 1
             labels[event.role.function_id] = event.role.function_label
         if not role_counts:
-            return ["<b>기능 분포</b>: 로마숫자 기능을 안정적으로 계산할 만큼 코드/스케일 후보가 충분하지 않습니다."]
+            return [f"<b>{tr('Function distribution')}</b>: {tr('There are not enough chord/scale candidates to compute roman-numeral functions reliably.')}"]
         total = sum(role_counts.values())
         parts = [
-            f"{html.escape(labels[key])} {count}회({round(count / total * 100)}%)"
+            f"{html.escape(labels[key])} x{count}({round(count / total * 100)}%)"
             for key, count in role_counts.most_common()
         ]
         dominant_note = ""
         if role_counts.get("modal_color", 0) >= max(role_counts.values()) * 0.6:
-            dominant_note = " 모달/색채 기능이 많으면 전통적인 종지보다 리프, 공통음, 반복 패턴이 곡의 접착제일 가능성이 큽니다."
-        return ["<b>기능 분포</b>: " + ", ".join(parts) + html.escape(dominant_note)]
+            dominant_note = tr(" If modal/color functions dominate, riffs, common tones, and repeated patterns may hold the song together more than traditional cadences.")
+        return [f"<b>{tr('Function distribution')}</b>: " + ", ".join(parts) + html.escape(dominant_note)]
 
     def _song_chromatic_features(
         self,
@@ -361,22 +389,22 @@ class TheoryExplainer:
 
         details: list[str] = []
         if chromatic_events:
-            details.append(f"스케일 밖 루트/기능 후보 {len(chromatic_events)}회")
+            details.append(tr("out-of-scale root/function candidates x{count}").format(count=len(chromatic_events)))
         if secondary_labels:
-            details.append("secondary dominant 후보 " + ", ".join(html.escape(label) for label in secondary_labels[:6]))
+            details.append(tr("secondary dominant candidates {items}").format(items=", ".join(html.escape(label) for label in secondary_labels[:6])))
         if tritone_count:
-            details.append(f"tritone substitution 후보 {tritone_count}회")
+            details.append(tr("tritone substitution candidates x{count}").format(count=tritone_count))
         if mixture_count:
-            details.append(f"modal/chromatic color 후보 {mixture_count}회")
+            details.append(tr("modal/chromatic color candidates x{count}").format(count=mixture_count))
         if not details:
-            details.append("대부분의 코드가 중심 스케일 내부에서 설명됩니다")
+            details.append(tr("Most chords are explained within the central scale"))
 
         concepts = " ".join(
             self._concept(key)
             for key in ("secondary_dominant", "modal_mixture", "tritone_substitution")
             if self._concept(key)
         )
-        return ["<b>크로매틱/차용 징후</b>: " + " / ".join(details) + " " + html.escape(concepts)]
+        return [f"<b>{tr('Chromatic/borrowed signs')}</b>: " + " / ".join(details) + " " + html.escape(concepts)]
 
     def _song_progression_schemas(self, events: list[SongEvent]) -> list[str]:
         roles = [event.role for event in events if event.role is not None]
@@ -402,12 +430,12 @@ class TheoryExplainer:
                 turnaround_like += 1
 
         parts = [
-            f"dominant→tonic 해결 {dominant_to_tonic}회",
-            f"predominant→dominant→tonic 흐름 {predominant_dominant_tonic}회",
-            f"turnaround 유사 흐름 {turnaround_like}회",
+            tr("dominant-to-tonic resolutions x{count}").format(count=dominant_to_tonic),
+            tr("predominant-dominant-tonic flows x{count}").format(count=predominant_dominant_tonic),
+            tr("turnaround-like flows x{count}").format(count=turnaround_like),
         ]
         concept = self.data.get("song_progression_concepts", {}).get("jazz_turnaround", "")
-        return ["<b>진행 문법</b>: " + ", ".join(parts) + ". " + html.escape(concept)]
+        return [f"<b>{tr('Progression grammar')}</b>: " + ", ".join(parts) + ". " + html.escape(concept)]
 
     def _song_root_motion(self, events: list[SongEvent]) -> list[str]:
         roots = [event.chord.root_pc for event in events if event.chord is not None]
@@ -430,20 +458,20 @@ class TheoryExplainer:
         total = sum(motion_counts.values())
         concept = self.data.get("song_progression_concepts", {}).get("circle_of_fifths", "")
         parts = [
-            f"동일 루트 {motion_counts['same']}회",
-            f"4도/5도 관계 {motion_counts['fifth']}회",
-            f"순차 진행 {motion_counts['step']}회",
-            f"3도 관계 {motion_counts['third']}회",
+            tr("same root x{count}").format(count=motion_counts["same"]),
+            tr("fourth/fifth relationships x{count}").format(count=motion_counts["fifth"]),
+            tr("stepwise motion x{count}").format(count=motion_counts["step"]),
+            tr("third relationships x{count}").format(count=motion_counts["third"]),
         ]
         strongest = motion_counts.most_common(1)[0][0]
         comment = ""
         if strongest == "same":
-            comment = " 루트가 오래 유지되어 리프 중심 또는 페달 포인트처럼 들릴 수 있습니다."
+            comment = tr(" The root stays for a long time, so it may sound riff-centered or like a pedal point.")
         elif strongest == "fifth":
-            comment = " 4도/5도 관계가 많아 5도권 진행의 자연스러운 끌림이 중요합니다."
+            comment = tr(" Many fourth/fifth relationships make circle-of-fifths pull important.")
         elif strongest == "step":
-            comment = " 순차적인 루트 이동이 많아 선율적인 베이스 라인처럼 진행이 이어질 수 있습니다."
-        return [f"<b>루트 움직임</b>: {', '.join(parts)} / 총 {total}회. {html.escape(comment)} {html.escape(concept)}"]
+            comment = tr(" Frequent stepwise root motion can make the progression feel like a melodic bass line.")
+        return [f"<b>{tr('Root motion')}</b>: {', '.join(parts)} / {tr('total')} {total}. {html.escape(comment)} {html.escape(concept)}"]
 
     def _song_repeated_patterns(self, events: list[SongEvent], prefer_flats: bool | None) -> list[str]:
         chord_names = [
@@ -463,10 +491,15 @@ class TheoryExplainer:
                 best_count = count
                 break
         if not best_pattern:
-            return ["<b>반복 패턴</b>: 완전히 같은 짧은 코드 루프보다는 리프/스케일 재료가 변형되며 이어지는 형태로 보입니다."]
+            return [f"<b>{tr('Repeated pattern')}</b>: {tr('Rather than an identical short chord loop, this looks like riff/scale material being varied and continued.')}"]
         riff_concept = self.data.get("song_progression_concepts", {}).get("riff_based_harmony", "")
         return [
-            f"<b>반복 패턴</b>: {' → '.join(html.escape(name) for name in best_pattern)} 패턴이 {best_count}회 이상 나타납니다. {html.escape(riff_concept)}"
+            f"<b>{tr('Repeated pattern')}</b>: "
+            + tr("{pattern} pattern appears at least {count} times. {concept}").format(
+                pattern=" -> ".join(html.escape(name) for name in best_pattern),
+                count=best_count,
+                concept=html.escape(riff_concept),
+            )
         ]
 
     def _song_section_closure(self, song: SongData, events: list[SongEvent], prefer_flats: bool | None) -> list[str]:
@@ -486,18 +519,18 @@ class TheoryExplainer:
             if section_events:
                 final = section_events[-1]
                 if final.role is None:
-                    closure = "판단 보류"
+                    closure = tr("pending judgment")
                 elif final.role.function_id == "tonic":
-                    closure = "닫힌 구간"
+                    closure = tr("closed section")
                 else:
-                    closure = "열린 구간"
+                    closure = tr("open section")
                 final_chord = candidate_display_name(final.chord, prefer_flats) if final.chord else "-"
                 final_role = final.role.function_label if final.role else "-"
                 sections.append(f"M{start}-{end}: {closure}({final_chord}, {final_role})")
             start += 8
 
         concept = self.data.get("song_progression_concepts", {}).get("open_closed_sections", "")
-        return ["<b>8마디 단위 열림/닫힘</b>: " + " / ".join(html.escape(item) for item in sections) + f"<br>{html.escape(concept)}"]
+        return [f"<b>{tr('8-measure open/closed sections')}</b>: " + " / ".join(html.escape(item) for item in sections) + f"<br>{html.escape(concept)}"]
 
     def _song_timeline(self, song: SongData, events: list[SongEvent], prefer_flats: bool | None) -> list[str]:
         by_measure: dict[int, list[SongEvent]] = {}
@@ -522,10 +555,10 @@ class TheoryExplainer:
                     chord_labels.append("...")
                 labels.append(f"M{measure.number}:{'/'.join(chord_labels)}")
             if labels:
-                chunks.append(" · ".join(html.escape(label) for label in labels))
+                chunks.append(" - ".join(html.escape(label) for label in labels))
         if not chunks:
             return []
-        return ["<b>진행 지도</b><br>" + "<br>".join(chunks)]
+        return [f"<b>{tr('Progression map')}</b><br>" + "<br>".join(chunks)]
 
     def _active_scale(self, area: SegmentData | MeasureData, candidate: Candidate | None, kind: str) -> Candidate | None:
         if candidate is not None and kind == "scale":
@@ -551,8 +584,8 @@ class TheoryExplainer:
             end = round((segment.end_in_measure / measure.length_ticks) * 100)
             location = f"{location} {start}-{end}%"
 
-        scale_text = candidate_display_name(scale, prefer_flats) if scale else "스케일 없음"
-        chord_text = candidate_display_name(chord, prefer_flats) if chord else "코드 없음"
+        scale_text = candidate_display_name(scale, prefer_flats) if scale else tr("No scale")
+        chord_text = candidate_display_name(chord, prefer_flats) if chord else tr("No chord")
         return f"{location}: {scale_text} / {chord_text}"
 
     def _scale_explanation(
@@ -575,11 +608,11 @@ class TheoryExplainer:
         outside = [pc for pc in observed if pc not in set(scale.pitch_classes)]
         outside_text = ""
         if outside:
-            outside_text = (
-                " 다만 "
-                + ", ".join(pitch_class_name(pc, prefer_flats) for pc in outside)
-                + "은 후보 스케일 밖이라 passing tone, neighbor tone, bend/slide 장식음, 또는 순간 전조 가능성으로 확인해야 합니다. "
-                + self._concept("non_chord_tones")
+            outside_text = tr(
+                " However, {notes} is outside the candidate scale, so check whether it is a passing tone, neighbor tone, bend/slide ornament, or brief modulation. {concept}"
+            ).format(
+                notes=", ".join(pitch_class_name(pc, prefer_flats) for pc in outside),
+                concept=self._concept("non_chord_tones"),
             )
 
         chord_scale_text = ""
@@ -593,13 +626,22 @@ class TheoryExplainer:
             if outside_chord:
                 outside_chord_text = ", ".join(pitch_class_name(pc, prefer_flats) for pc in sorted(outside_chord))
                 chord_scale_text = (
-                    f"<b>코드-스케일 관계</b>: {html.escape(chord_name)} 구성음 중 {html.escape(inside_text)}는 스케일 안에 있고, "
-                    f"{html.escape(outside_chord_text)}는 스케일 밖 색채입니다. {html.escape(self._concept('chord_scale'))}"
+                    f"<b>{tr('Chord-scale relationship')}</b>: "
+                    + tr("In {chord}, {inside} is inside the scale, while {outside} is outside-scale color. {concept}").format(
+                        chord=html.escape(chord_name),
+                        inside=html.escape(inside_text),
+                        outside=html.escape(outside_chord_text),
+                        concept=html.escape(self._concept("chord_scale")),
+                    )
                 )
             else:
                 chord_scale_text = (
-                    f"<b>코드-스케일 관계</b>: {html.escape(chord_name)} 구성음은 모두 {html.escape(scale_name)} 안에 들어갑니다. "
-                    f"따라서 이 구간은 코드톤과 스케일 후보가 서로 강하게 지지합니다. {html.escape(self._concept('chord_scale'))}"
+                    f"<b>{tr('Chord-scale relationship')}</b>: "
+                    + tr("All notes of {chord} fit inside {scale}. So the chord tones and scale candidate strongly support each other. {concept}").format(
+                        chord=html.escape(chord_name),
+                        scale=html.escape(scale_name),
+                        concept=html.escape(self._concept("chord_scale")),
+                    )
                 )
 
         color_degrees = [
@@ -609,17 +651,27 @@ class TheoryExplainer:
         ]
         color_text = ""
         if color_degrees:
-            color_text = f" 특히 {'/'.join(color_degrees)} 같은 색채음이 장단조 기본 골격을 어떻게 벗어나는지 보면 구분이 쉽습니다."
+            color_text = tr(" In particular, color tones such as {degrees} show how this leaves the basic major/minor frame.").format(
+                degrees="/".join(color_degrees)
+            )
 
         return [
-            f"<b>스케일 근거</b>: 실제 나온 음은 {html.escape(observed_names)}이고, {html.escape(scale_name)} 후보는 {scale.matched_notes}/{scale.total_notes}개 음을 품어서 {scale.score}/100점으로 평가됐습니다.{html.escape(outside_text)}",
-            f"<b>{html.escape(scale_name)}의 음</b>: {html.escape(note_names)}.",
-            f"<b>도수 지도</b>: {html.escape(degree_names)}.",
-            self._candidate_confidence(area.analysis.scale_candidates, "스케일", prefer_flats),
+            f"<b>{tr('Scale evidence')}</b>: "
+            + tr("The observed notes are {observed}, and {scale} contains {matched}/{total} notes for a score of {score}/100.{outside}").format(
+                observed=html.escape(observed_names),
+                scale=html.escape(scale_name),
+                matched=scale.matched_notes,
+                total=scale.total_notes,
+                score=scale.score,
+                outside=html.escape(outside_text),
+            ),
+            f"<b>{tr('{scale} notes').format(scale=html.escape(scale_name))}</b>: {html.escape(note_names)}.",
+            f"<b>{tr('Degree map')}</b>: {html.escape(degree_names)}.",
+            self._candidate_confidence(area.analysis.scale_candidates, "Scale", prefer_flats),
             chord_scale_text,
             self._scale_parent_explanation(scale, family, prefer_flats),
-            f"<b>색채</b>: {html.escape(family_data.get('mood', '이 스케일은 현재 구간의 음 집합과 가장 잘 맞는 후보입니다.'))} {html.escape(family_data.get('focus', '루트와 주요 코드톤의 위치를 함께 확인해보세요.'))}{html.escape(color_text)}",
-            f"<b>연습 포인트</b>: {html.escape(family_data.get('practice_hint', '루트, 3도, 5도를 먼저 듣고 나머지 음이 긴장인지 장식인지 나눠보세요.'))}",
+            f"<b>{tr('Color')}</b>: {html.escape(family_data.get('mood', tr('This scale is the best fit for the current note set.')))} {html.escape(family_data.get('focus', tr('Check the root and main chord-tone positions together.')))}{html.escape(color_text)}",
+            f"<b>{tr('Practice point')}</b>: {html.escape(family_data.get('practice_hint', tr('Listen for the root, third, and fifth first, then decide whether the remaining notes are tension or ornament.')))}",
         ]
 
     def _chord_explanation(
@@ -639,27 +691,40 @@ class TheoryExplainer:
         guide_tones = self._guide_tone_text(chord, prefer_flats)
         tensions = self._chord_tension_text(chord, prefer_flats)
         parts = [
-            f"<b>코드 근거</b>: {html.escape(chord_name)} 후보는 구성음 {html.escape(chord_notes)}을 기준으로 {chord.matched_notes}/{chord.total_notes}개 음을 설명해 {chord.score}/100점입니다.",
-            self._candidate_confidence(area.analysis.chord_candidates, "코드", prefer_flats),
-            f"<b>코드 성격</b>: {html.escape(family_data.get('color', '이 코드는 현재 음 집합을 가장 잘 설명하는 후보입니다.'))} {html.escape(family_data.get('listen', '루트와 3도, 7도를 먼저 확인해보세요.'))}",
+            f"<b>{tr('Chord evidence')}</b>: "
+            + tr("{chord} explains {matched}/{total} notes using chord tones {notes} for a score of {score}/100.").format(
+                chord=html.escape(chord_name),
+                matched=chord.matched_notes,
+                total=chord.total_notes,
+                notes=html.escape(chord_notes),
+                score=chord.score,
+            ),
+            self._candidate_confidence(area.analysis.chord_candidates, "Chord", prefer_flats),
+            f"<b>{tr('Chord character')}</b>: {html.escape(family_data.get('color', tr('This chord best explains the current note set.')))} {html.escape(family_data.get('listen', tr('Check the root, third, and seventh first.')))}",
         ]
         if guide_tones:
-            parts.append(f"<b>가이드톤</b>: {html.escape(guide_tones)} {html.escape(self._concept('guide_tones'))}")
+            parts.append(f"<b>{tr('Guide tones')}</b>: {html.escape(guide_tones)} {html.escape(self._concept('guide_tones'))}")
         if tensions:
-            parts.append(f"<b>확장/변화음</b>: {html.escape(tensions)}")
+            parts.append(f"<b>{tr('Extensions/alterations')}</b>: {html.escape(tensions)}")
 
         if scale is None:
-            parts.append("<b>기능 해석</b>: 비교할 스케일 후보가 없어 로마숫자와 기능을 확정하지 않았습니다.")
+            parts.append(f"<b>{tr('Function interpretation')}</b>: {tr('No scale candidate is available for comparison, so roman numeral and function were not fixed.')}")
             return parts
 
         role = self._chord_role(chord, scale)
         scale_name = candidate_display_name(scale, prefer_flats)
         parts.append(
-            f"<b>기능 해석</b>: {html.escape(scale_name)} 기준으로 {html.escape(chord_name)}는 대략 <b>{html.escape(role.roman)}</b>이며, "
-            f"{html.escape(role.function_label)} 기능으로 볼 수 있습니다. {html.escape(role.function_meaning)}"
+            f"<b>{tr('Function interpretation')}</b>: "
+            + tr("Relative to {scale}, {chord} is roughly <b>{roman}</b>, and can be heard as {function} function. {meaning}").format(
+                scale=html.escape(scale_name),
+                chord=html.escape(chord_name),
+                roman=html.escape(role.roman),
+                function=html.escape(role.function_label),
+                meaning=html.escape(role.function_meaning),
+            )
         )
         if role.chromatic:
-            parts.append("이 코드는 현재 스케일의 다이어토닉 코드에서 살짝 벗어나므로, 차용화음이나 순간적인 색채 코드로 들릴 수 있습니다.")
+            parts.append(tr("This chord sits slightly outside the current scale diatonic chords, so it may sound like a borrowed chord or momentary color chord."))
         chromatic_detail = self._chromatic_chord_detail(chord, scale, prefer_flats)
         if chromatic_detail:
             parts.append(chromatic_detail)
@@ -673,7 +738,7 @@ class TheoryExplainer:
         prefer_flats: bool | None,
     ) -> list[str]:
         if len(measure.segments) <= 1:
-            return ["<b>마디 내부 진행</b>: 이 마디 안에서는 뚜렷한 스케일/코드 변화가 하나만 감지됐습니다."]
+            return [f"<b>{tr('Within-measure movement')}</b>: {tr('Only one clear scale/chord change was detected inside this measure.')}"]
 
         rows: list[tuple[SegmentData, Candidate | None, Candidate | None, ChordRole | None]] = []
         for segment in measure.segments:
@@ -691,7 +756,7 @@ class TheoryExplainer:
             roman = f" {role.roman}" if role else ""
             labels.append(f"{start}-{end}% {chord_name}{roman} / {scale_name}")
 
-        paragraphs = ["<b>마디 내부 진행</b>: " + " → ".join(html.escape(label) for label in labels)]
+        paragraphs = [f"<b>{tr('Within-measure movement')}</b>: " + " -> ".join(html.escape(label) for label in labels)]
 
         transitions: list[str] = []
         for previous, current in zip(rows, rows[1:]):
@@ -705,17 +770,17 @@ class TheoryExplainer:
             elif previous[2] is not None and current[2] is not None:
                 root_motion = (current[2].root_pc - previous[2].root_pc) % 12
                 if root_motion in {5, 7}:
-                    transitions.append("루트가 4도/5도 관계로 움직여 코드 사이의 방향감이 비교적 강하게 들립니다.")
+                    transitions.append(tr("The root moves by fourth/fifth relationship, so the direction between chords sounds fairly strong."))
 
         if transitions:
-            paragraphs.append("<b>왜 진행처럼 들리나</b>: " + " ".join(html.escape(text) for text in transitions[:3]))
+            paragraphs.append(f"<b>{tr('Why it sounds like a progression')}</b>: " + " ".join(html.escape(text) for text in transitions[:3]))
 
         details = self._segment_transition_details(rows, prefer_flats)
         if details:
-            paragraphs.append("<b>구간 연결 디테일</b>: " + " / ".join(html.escape(detail) for detail in details[:5]))
+            paragraphs.append(f"<b>{tr('Segment connection detail')}</b>: " + " / ".join(html.escape(detail) for detail in details[:5]))
 
         if selected_segment is not None:
-            paragraphs.append("현재 선택한 변화 구간만 하단 지판에 녹색 운지점으로 좁혀 표시됩니다. 다른 구간을 누르면 설명과 운지점이 함께 바뀝니다.")
+            paragraphs.append(tr("Only the selected change segment is narrowed to green fingering dots on the lower fretboard. Click another segment to update the explanation and fingering dots together."))
 
         return paragraphs
 
@@ -730,19 +795,24 @@ class TheoryExplainer:
             previous_segment, previous_scale, previous_chord, previous_role = previous
             current_segment, current_scale, current_chord, current_role = current
             start = round((current_segment.start_in_measure / measure_length) * 100) if measure_length else 0
-            parts: list[str] = [f"{start}% 지점"]
+            parts: list[str] = [tr("{start}% point").format(start=start)]
             if previous_chord is not None and current_chord is not None:
                 motion = self._root_motion_label(previous_chord.root_pc, current_chord.root_pc)
                 common = len(set(previous_chord.pitch_classes) & set(current_chord.pitch_classes))
-                parts.append(f"루트 {motion}, 공통 코드톤 {common}개")
+                parts.append(tr("root {motion}, common chord tones {count}").format(motion=motion, count=common))
             if previous_scale is not None and current_scale is not None and previous_scale.name != current_scale.name:
                 prev_family = self._scale_family(previous_scale.name)
                 curr_family = self._scale_family(current_scale.name)
                 parts.append(
-                    f"스케일 {candidate_display_name(previous_scale, prefer_flats)}에서 {candidate_display_name(current_scale, prefer_flats)}로 변경({prev_family}->{curr_family})"
+                    tr("scale changes from {previous} to {current} ({previous_family}->{current_family})").format(
+                        previous=candidate_display_name(previous_scale, prefer_flats),
+                        current=candidate_display_name(current_scale, prefer_flats),
+                        previous_family=tr(prev_family),
+                        current_family=tr(curr_family),
+                    )
                 )
             if previous_role is not None and current_role is not None:
-                parts.append(f"기능 {previous_role.function_label}->{current_role.function_label}")
+                parts.append(tr("function {previous}->{current}").format(previous=previous_role.function_label, current=current_role.function_label))
             details.append(", ".join(parts))
         return details
 
@@ -752,29 +822,39 @@ class TheoryExplainer:
         label: str,
         prefer_flats: bool | None,
     ) -> str:
-        if label == "스케일":
+        if label == "Scale":
             candidates = self._unique_scale_candidates(candidates)
         if not candidates:
             return ""
         first = candidates[0]
         if len(candidates) == 1:
             return (
-                f"<b>{label} 후보 비교</b>: 현재 표시된 후보는 "
-                f"{html.escape(candidate_display_name(first, prefer_flats))} {first.score}/100점 하나입니다."
+                f"<b>{tr('{label} candidate comparison').format(label=tr(label))}</b>: "
+                + tr("The displayed candidate is {candidate} {score}/100 only.").format(
+                    candidate=html.escape(candidate_display_name(first, prefer_flats)),
+                    score=first.score,
+                )
             )
 
         second = candidates[1]
         gap = first.score - second.score
         if gap <= 4:
-            reading = "거의 동점이라 앞뒤 마디와 전체 중심 스케일을 함께 봐야 합니다."
+            reading = tr("The scores are almost tied, so compare surrounding measures and the global center scale.")
         elif gap <= 10:
-            reading = "1순위가 앞서지만 다른 해석도 충분히 가능한 구간입니다."
+            reading = tr("The top candidate leads, but other interpretations are still plausible.")
         else:
-            reading = "1순위 후보가 비교적 분명합니다."
+            reading = tr("The top candidate is relatively clear.")
         return (
-            f"<b>{label} 후보 비교</b>: 1순위 {html.escape(candidate_display_name(first, prefer_flats))} {first.score}/100점, "
-            f"2순위 {html.escape(candidate_display_name(second, prefer_flats))} {second.score}/100점, 차이 {gap}점입니다. "
-            f"{html.escape(reading)} {html.escape(self._concept('candidate_confidence'))}"
+            f"<b>{tr('{label} candidate comparison').format(label=tr(label))}</b>: "
+            + tr("top {first} {first_score}/100, second {second} {second_score}/100, gap {gap} points. {reading} {concept}").format(
+                first=html.escape(candidate_display_name(first, prefer_flats)),
+                first_score=first.score,
+                second=html.escape(candidate_display_name(second, prefer_flats)),
+                second_score=second.score,
+                gap=gap,
+                reading=html.escape(reading),
+                concept=html.escape(self._concept("candidate_confidence")),
+            )
         )
 
     def _unique_scale_candidates(self, candidates: tuple[Candidate, ...]) -> tuple[Candidate, ...]:
@@ -882,13 +962,18 @@ class TheoryExplainer:
             chord_name = candidate_display_name(chord, prefer_flats)
             target_name = pitch_class_name(target_pc, prefer_flats)
             return (
-                f"<b>크로매틱 해석</b>: {html.escape(chord_name)}는 {html.escape(target_name)}({html.escape(target_roman)})로 "
-                f"해결하려는 secondary dominant처럼 볼 수 있습니다. {html.escape(self._concept('secondary_dominant'))}"
+                f"<b>{tr('Chromatic interpretation')}</b>: "
+                + tr("{chord} can resolve to {target}({roman}) as a secondary dominant. {concept}").format(
+                    chord=html.escape(chord_name),
+                    target=html.escape(target_name),
+                    roman=html.escape(target_roman),
+                    concept=html.escape(self._concept("secondary_dominant")),
+                )
             )
         if self._is_tritone_substitution(chord, scale):
-            return "<b>크로매틱 해석</b>: bII7 계열 dominant라면 V7의 tritone substitution 가능성이 있습니다. " + html.escape(self._concept("tritone_substitution"))
+            return f"<b>{tr('Chromatic interpretation')}</b>: {tr('A bII7-family dominant may be a tritone substitution for V7.')} " + html.escape(self._concept("tritone_substitution"))
         if chord.root_pc not in set(scale.pitch_classes):
-            return "<b>크로매틱 해석</b>: 루트 자체가 현재 스케일 밖이므로 차용화음, 전조 암시, 또는 리프 중심 색채로 확인해야 합니다. " + html.escape(self._concept("modal_mixture"))
+            return f"<b>{tr('Chromatic interpretation')}</b>: {tr('The root itself is outside the current scale, so check for borrowed harmony, implied modulation, or riff-centered color.')} " + html.escape(self._concept("modal_mixture"))
         return ""
 
     def _secondary_dominant_target(self, chord: Candidate, scale: Candidate) -> tuple[int, str] | None:
@@ -906,32 +991,32 @@ class TheoryExplainer:
     def _root_motion_label(self, previous_root: int, current_root: int) -> str:
         motion = (current_root - previous_root) % 12
         if motion == 0:
-            return "동일 루트"
+            return tr("same root")
         if motion == 5:
-            return "완전4도 상승"
+            return tr("up a perfect fourth")
         if motion == 7:
-            return "완전5도 상승"
+            return tr("up a perfect fifth")
         if motion in {1, 2}:
-            return "순차 상승"
+            return tr("step up")
         if motion in {10, 11}:
-            return "순차 하강"
+            return tr("step down")
         if motion in {3, 4}:
-            return "3도 상승"
+            return tr("third up")
         if motion in {8, 9}:
-            return "3도 하강"
+            return tr("third down")
         if motion == 6:
-            return "트라이톤"
-        return f"{motion}반음 이동"
+            return tr("tritone")
+        return tr("{count} semitone motion").format(count=motion)
 
     def _concept(self, key: str) -> str:
-        return self.data.get("analysis_concepts", {}).get(key, "")
+        return tr(self.data.get("analysis_concepts", {}).get(key, ""))
 
     def _uncertainty_note(self, area: SegmentData | MeasureData) -> list[str]:
         note_count = len(area.notes)
         if note_count == 0:
-            return ["분석할 음이 없는 쉼표 구간입니다."]
+            return [tr("This is a rest segment with no notes to analyze.")]
         if note_count <= 2:
-            return ["<b>주의</b>: 음이 1-2개뿐이면 여러 스케일/코드가 같은 점수를 받을 수 있습니다. 앞뒤 마디까지 함께 보는 것이 좋습니다."]
+            return [f"<b>{tr('Note')}</b>: {tr('With only one or two notes, several scales/chords can receive the same score. Check surrounding measures too.')}"]
         return []
 
     def _chord_role(self, chord: Candidate, scale: Candidate) -> ChordRole:
@@ -1027,36 +1112,53 @@ class TheoryExplainer:
     def _progression_idea(self, previous_function: str, current_function: str) -> str:
         for idea in self.data["progression_ideas"]:
             if idea["from"] == previous_function and idea["to"] == current_function:
-                return idea["explanation"]
+                return tr(idea["explanation"])
         return ""
 
     def _scale_parent_explanation(self, scale: Candidate, family: str, prefer_flats: bool | None) -> str:
         parent = self._harmonic_minor_parent(scale.root_pc, family)
         if parent is not None:
             return (
-                f"<b>모계 스케일</b>: {html.escape(candidate_display_name(scale, prefer_flats))}는 "
-                f"<b>{html.escape(pitch_class_name(parent, prefer_flats))} harmonic minor</b>와 같은 음 재료를 공유하는 harmonic minor 계열 모드입니다. "
-                "따라서 구간 이름은 모드로 보이고, 곡 전체 설명은 harmonic minor 기반으로 보일 수 있습니다."
+                f"<b>{tr('Parent scale')}</b>: "
+                + tr(
+                    "{scale} shares material with <b>{parent} harmonic minor</b>, so it is a harmonic-minor-family mode. "
+                    "So the segment name may appear as a mode while the whole-song explanation may look harmonic-minor based."
+                ).format(
+                    scale=html.escape(candidate_display_name(scale, prefer_flats)),
+                    parent=html.escape(pitch_class_name(parent, prefer_flats)),
+                )
             )
         parent = self._melodic_minor_parent(scale.root_pc, family)
         if parent is not None:
             return (
-                f"<b>모계 스케일</b>: {html.escape(candidate_display_name(scale, prefer_flats))}는 "
-                f"<b>{html.escape(pitch_class_name(parent, prefer_flats))} melodic minor</b> 계열의 모드입니다. "
-                "코드 하나에는 이 모드명이 잘 맞아도, 앞뒤 진행에서는 parent scale과 voice leading을 같이 보는 편이 더 자연스럽습니다."
+                f"<b>{tr('Parent scale')}</b>: "
+                + tr(
+                    "{scale} is a <b>{parent} melodic minor</b> family mode. "
+                    "Even if this mode name fits a single chord, parent scale and voice leading may explain surrounding motion more naturally."
+                ).format(
+                    scale=html.escape(candidate_display_name(scale, prefer_flats)),
+                    parent=html.escape(pitch_class_name(parent, prefer_flats)),
+                )
             )
         parent = self._double_harmonic_parent(scale.root_pc, family)
         if parent is not None:
             return (
-                f"<b>모계 스케일</b>: {html.escape(candidate_display_name(scale, prefer_flats))}는 "
-                f"<b>{html.escape(pitch_class_name(parent, prefer_flats))} double harmonic</b> 계열과 같은 음 재료를 공유합니다. "
-                "b2와 장3도, b6과 장7도가 만드는 반음 긴장이 이 계열의 핵심입니다."
+                f"<b>{tr('Parent scale')}</b>: "
+                + tr(
+                    "{scale} shares material with the <b>{parent} double harmonic</b> family. "
+                    "The semitone tensions between b2/major 3rd and b6/major 7th are central to this family."
+                ).format(
+                    scale=html.escape(candidate_display_name(scale, prefer_flats)),
+                    parent=html.escape(pitch_class_name(parent, prefer_flats)),
+                )
             )
         if family == "phrygian":
             return (
-                "<b>주의할 차이</b>: 일반 Phrygian은 b3를 가진 minor 모드이고, "
-                "Phrygian dominant는 3도를 가진 harmonic minor의 5번째 모드입니다. "
-                "이 3도 한 음 때문에 dominant 기능과 네오클래시컬 색채가 크게 달라집니다."
+                f"<b>{tr('Key difference')}</b>: "
+                + tr(
+                    "Regular Phrygian is a minor mode with b3, while Phrygian dominant is the fifth mode of harmonic minor with a major 3rd. "
+                    "That one scale degree strongly changes the dominant function and neoclassical color."
+                )
             )
         return ""
 
@@ -1113,7 +1215,7 @@ class TheoryExplainer:
         body = "\n".join(f"<p>{paragraph}</p>" for paragraph in paragraphs if paragraph)
         source_html = ""
         if sources:
-            source_html = "<hr><p><b>참고 데이터 출처</b>: " + " · ".join(sources) + "</p>"
+            source_html = f"<hr><p><b>{tr('Reference sources')}</b>: " + " - ".join(sources) + "</p>"
         return f"""
         <html>
         <head>

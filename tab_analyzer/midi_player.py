@@ -41,7 +41,7 @@ class MidiOutput:
         if sys.platform.startswith("win"):
             self._open_windows_midi()
         else:
-            self.error = "현재 내장 MIDI 출력은 Windows winmm 장치를 사용합니다."
+            self.error = "The built-in MIDI output currently uses Windows winmm devices."
 
     def close(self) -> None:
         self.all_notes_off()

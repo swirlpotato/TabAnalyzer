@@ -11,6 +11,7 @@ import traceback
 import wave
 import json
 import zipfile
+import html
 from datetime import datetime
 from fractions import Fraction
 from http import HTTPStatus
@@ -162,6 +163,11 @@ PROJECT_ROOT_PATH = Path(__file__).resolve().parent.parent.parent
 SONGSTERR_DOWNLOAD_DIR = PROJECT_ROOT_PATH / "Downloads"
 RECENT_FILES_PATH = COOKIE_STORE_PATH.with_name("recent_files.json")
 MAX_RECENT_FILES = 10
+
+
+def _trf(template: str, **values: object) -> str:
+    return tr(template).format(**values)
+
 
 MAX_DISPLAY_CANDIDATES = 12
 CHORD_DEGREE_LABELS = {
@@ -418,18 +424,18 @@ class AnalysisProgressDialog(QDialog):
         self,
         parent: QWidget | None = None,
         *,
-        window_title: str = "분석 중",
-        title_prefix: str = "분석 중",
-        initial_detail: str = "파일을 준비하는 중입니다.",
+        window_title: str = "Analyzing",
+        title_prefix: str = "Analyzing",
+        initial_detail: str = "Preparing the file.",
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle(window_title)
+        self.setWindowTitle(tr(window_title))
         self.setModal(True)
         self.setFixedSize(340, 132)
         self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
-        self._title_prefix = title_prefix
+        self._title_prefix = tr(title_prefix)
         self.title_label = QLabel(f"{self._title_prefix}... 0%")
-        self.detail_label = QLabel(initial_detail)
+        self.detail_label = QLabel(tr(initial_detail))
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
@@ -460,7 +466,7 @@ class AnalysisProgressDialog(QDialog):
         self.progress_bar.setValue(value)
         self.title_label.setText(f"{self._title_prefix}... {value}%")
         if detail:
-            self.detail_label.setText(detail)
+            self.detail_label.setText(tr(detail))
         if value >= 100:
             self._timer.stop()
 
@@ -487,21 +493,21 @@ class _LoadWorker(QObject):
     def run(self) -> None:
         try:
             if self.include_tracks:
-                self.progress.emit(10, "파일 정보를 읽는 중입니다.")
+                self.progress.emit(10, "Reading file information.")
                 tracks = list_tracks(self.path)
-                self.progress.emit(30, "기타 트랙을 찾는 중입니다.")
+                self.progress.emit(30, "Finding guitar tracks.")
                 selected_track = default_track_index(self.path)
-                self.progress.emit(40, "타브와 음표를 분석하는 중입니다.")
+                self.progress.emit(40, "Analyzing tabs and notes.")
                 song = load_gp_file(self.path, track_index=selected_track)
-                self.progress.emit(90, "분석 결과를 정리하는 중입니다.")
+                self.progress.emit(90, "Preparing analysis results.")
                 self.finished.emit(("file", self.path, tracks, selected_track, song))
                 return
 
             track_index = int(self.track_index or 0)
-            self.progress.emit(10, "선택한 트랙을 준비하는 중입니다.")
-            self.progress.emit(30, "타브와 음표를 분석하는 중입니다.")
+            self.progress.emit(10, "Preparing the selected track.")
+            self.progress.emit(30, "Analyzing tabs and notes.")
             song = load_gp_file(self.path, track_index=track_index)
-            self.progress.emit(90, "분석 결과를 정리하는 중입니다.")
+            self.progress.emit(90, "Preparing analysis results.")
             self.finished.emit(("track", self.path, None, track_index, song))
         except Exception as exc:  # noqa: BLE001 - relay parser/load errors to the UI thread.
             self.failed.emit(str(exc))
@@ -523,21 +529,21 @@ class _SongsterrWorker(QObject):
     def run(self) -> None:
         try:
             if self.mode == "search":
-                self.progress.emit(15, "Songsterr에서 곡을 검색하는 중입니다.")
+                self.progress.emit(15, "Searching songs on Songsterr.")
                 results = search_tabs(self.query)
-                self.progress.emit(90, "검색 결과를 정리하는 중입니다.")
+                self.progress.emit(90, "Preparing search results.")
                 self.finished.emit(("search", self.query, results))
                 return
 
             if self.result is None:
-                raise SongsterrError("다운로드할 Songsterr 곡이 선택되지 않았습니다.")
-            self.progress.emit(15, "Songsterr에서 Guitar Pro 파일을 요청하는 중입니다.")
+                raise SongsterrError("No Songsterr song was selected for download.")
+            self.progress.emit(15, "Requesting the Guitar Pro file from Songsterr.")
             path = download_guitar_pro(
                 self.result,
                 SONGSTERR_DOWNLOAD_DIR,
                 cookie=self.cookie,
             )
-            self.progress.emit(90, "다운로드 파일을 준비하는 중입니다.")
+            self.progress.emit(90, "Preparing the downloaded file.")
             self.finished.emit(("download", self.result, path))
         except SongsterrAuthError:
             self.authFailed.emit()
@@ -681,7 +687,7 @@ class TabCanvas(QWidget):
     def _draw_empty(self, painter: QPainter) -> None:
         painter.setPen(QColor("#657083"))
         painter.setFont(QFont("Segoe UI", 12))
-        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Open a Guitar Pro file")
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, tr("Open a Guitar Pro file"))
 
     def _draw_measure(self, painter: QPainter, layout: _MeasureLayout, measure: MeasureData) -> None:
         rect = layout.rect
@@ -1184,7 +1190,7 @@ class TabScoreWidget(QWidget):
     def _draw_empty(self, painter: QPainter) -> None:
         painter.setPen(QColor("#657083"))
         painter.setFont(QFont("Segoe UI", 12))
-        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Open a Guitar Pro file")
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, tr("Open a Guitar Pro file"))
 
     def _draw_measure(self, painter: QPainter, layout: _MeasureLayout, measure: MeasureData) -> None:
         if self.song is None:
@@ -2261,7 +2267,7 @@ class RecordingController(QObject):
 
     def start_recording(self, device, song_path: Path | None) -> None:
         if not self.available or self.capture_session is None or self.recorder is None:
-            self.statusChanged.emit("녹음 기능 없음")
+            self.statusChanged.emit(tr("Recording unavailable"))
             return
         if self.recording:
             return
@@ -2278,9 +2284,9 @@ class RecordingController(QObject):
             self.recorder.record()
             self.recording = True
             self.recordingChanged.emit(True)
-            self.statusChanged.emit(f"녹음 중: {self.last_recording.name}")
+            self.statusChanged.emit(_trf("Recording: {name}", name=self.last_recording.name))
         except Exception as exc:  # noqa: BLE001 - multimedia backend errors should be visible.
-            self.statusChanged.emit(f"녹음 실패: {exc}")
+            self.statusChanged.emit(_trf("Recording failed: {error}", error=exc))
 
     def stop_recording(self) -> None:
         if not self.available or self.recorder is None or not self.recording:
@@ -2289,7 +2295,7 @@ class RecordingController(QObject):
         self.recording = False
         self.recordingChanged.emit(False)
         if self.last_recording is not None:
-            self.statusChanged.emit(f"녹음 저장: {self.last_recording.name}")
+            self.statusChanged.emit(_trf("Recording saved: {name}", name=self.last_recording.name))
             self._emit_recording_saved()
 
     def play_last_recording(self, start_position: int = 0) -> None:
@@ -2303,10 +2309,10 @@ class RecordingController(QObject):
 
     def play_recording(self, path: Path | None, start_position: int = 0) -> None:
         if not self.available or self.player is None or path is None:
-            self.statusChanged.emit("재생할 녹음 없음")
+            self.statusChanged.emit(tr("No recording to play"))
             return
         if not path.exists():
-            self.statusChanged.emit(f"녹음 파일 없음: {path.name}")
+            self.statusChanged.emit(_trf("Recording file missing: {name}", name=path.name))
             return
         self.last_recording = path
         self.playback_file = path
@@ -2315,7 +2321,7 @@ class RecordingController(QObject):
             self.player.setSource(source)
         self.player.setPosition(max(0, int(start_position)))
         self.player.play()
-        self.statusChanged.emit(f"녹음 재생: {path.name}")
+        self.statusChanged.emit(_trf("Playing recording: {name}", name=path.name))
 
     def set_playback_position(self, position: int) -> None:
         if self.available and self.player is not None:
@@ -2337,7 +2343,7 @@ class RecordingController(QObject):
             self.recording = False
             self.recordingChanged.emit(False)
             if self.last_recording is not None:
-                self.statusChanged.emit(f"녹음 저장: {self.last_recording.name}")
+                self.statusChanged.emit(_trf("Recording saved: {name}", name=self.last_recording.name))
                 self._emit_recording_saved()
 
     def _on_player_state_changed(self, state) -> None:
@@ -2613,7 +2619,7 @@ class MemoEditorWidget(QWidget):
 
     def set_measure(self, measure_number: int | None, text: str) -> None:
         self._syncing = True
-        self.title_label.setText(f"M{measure_number} 메모" if measure_number is not None else "M-")
+        self.title_label.setText(_trf("M{measure_number} Memo", measure_number=measure_number) if measure_number is not None else "M-")
         self.editor.setPlainText(text)
         self._syncing = False
         self._update_preview()
@@ -2652,7 +2658,7 @@ class RecordingListRow(QWidget):
         self.path = path
         self.delete_button = QPushButton()
         self.delete_button.setIcon(_delete_recording_icon())
-        self.delete_button.setToolTip("녹음 파일 삭제")
+        self.delete_button.setToolTip(tr("Delete recording file"))
         self.delete_button.setFixedSize(26, 26)
         self.delete_button.setIconSize(QSize(18, 18))
         self.delete_button.clicked.connect(lambda: self.deleteRequested.emit(self.path))
@@ -2700,27 +2706,27 @@ class TabPlaybackPanel(QWidget):
         self.score = TabScoreWidget()
         self.score_scroll = QScrollArea()
         self.recording_tab = QWidget()
-        self.play_button = _icon_button(_player_icon("play"), "재생")
+        self.play_button = _icon_button(_player_icon("play"), "Play")
         self.midi_radio = QRadioButton("MIDI")
         self.youtube_radio = QRadioButton("YouTube")
-        self.repeat_check = QCheckBox("선택 반복")
-        self.metronome_check = QCheckBox("메트로놈")
+        self.repeat_check = QCheckBox("Repeat selection")
+        self.metronome_check = QCheckBox("Metronome")
         self.repeat_start_spin = QSpinBox()
         self.repeat_end_spin = QSpinBox()
         self.speed_slider = QSlider(Qt.Orientation.Horizontal)
         self.speed_label = QLabel("100%")
-        self.record_metronome_check = QCheckBox("녹음 클릭")
-        self.metronome_button = _icon_button(_player_icon("metronome"), "메트로놈 F9")
-        self.record_button = _icon_button(_player_icon("record"), "녹음 F10")
-        self.record_stop_button = _icon_button(_player_icon("stop"), "녹음 종료 F11")
-        self.record_play_button = _icon_button(_player_icon("play"), "녹음 재생 F12")
+        self.record_metronome_check = QCheckBox("Record click")
+        self.metronome_button = _icon_button(_player_icon("metronome"), "Metronome F9")
+        self.record_button = _icon_button(_player_icon("record"), "Record F10")
+        self.record_stop_button = _icon_button(_player_icon("stop"), "Stop recording F11")
+        self.record_play_button = _icon_button(_player_icon("play"), "Play recording F12")
         self.record_playback_slider = QSlider(Qt.Orientation.Horizontal)
         self.recording_list = QListWidget()
-        self.delete_all_recordings_button = QPushButton("모든 녹음 삭제하기")
+        self.delete_all_recordings_button = QPushButton("Delete all recordings")
         self.record_input_combo = QComboBox()
         self.record_bpm_spin = QSpinBox()
         self.record_beats_spin = QSpinBox()
-        self.shortcut_label = QLabel("F9 메트로놈 · F10 녹음 · F11 종료 · F12 재생")
+        self.shortcut_label = QLabel("F9 Metronome - F10 Record - F11 Stop - F12 Play")
         self.record_status_label = QLabel()
         self.midi_status_label = QLabel()
         self.youtube_status_label = QLabel()
@@ -2774,24 +2780,24 @@ class TabPlaybackPanel(QWidget):
         controls.addWidget(self.youtube_radio)
         controls.addWidget(self.midi_radio)
         controls.addWidget(self.repeat_check)
-        controls.addWidget(QLabel("시작"))
+        controls.addWidget(QLabel("Start"))
         self.repeat_start_spin.setRange(1, 1)
         self.repeat_start_spin.setKeyboardTracking(False)
         controls.addWidget(self.repeat_start_spin)
-        controls.addWidget(QLabel("끝"))
+        controls.addWidget(QLabel("End"))
         self.repeat_end_spin.setRange(1, 1)
         self.repeat_end_spin.setKeyboardTracking(False)
         controls.addWidget(self.repeat_end_spin)
         controls.addWidget(self.metronome_check)
         controls.addSpacing(8)
-        controls.addWidget(QLabel("속도"))
+        controls.addWidget(QLabel("Speed"))
         self.speed_slider.setRange(50, 200)
         self.speed_slider.setValue(100)
         self.speed_slider.setFixedWidth(130)
         controls.addWidget(self.speed_slider)
         controls.addWidget(self.speed_label)
         controls.addStretch(1)
-        self.midi_status_label.setText("MIDI OK" if self.player.is_midi_available else "MIDI 출력 없음")
+        self.midi_status_label.setText(tr("MIDI OK") if self.player.is_midi_available else tr("No MIDI output"))
         self.midi_status_label.setStyleSheet("color: #596579;")
         controls.addWidget(self.midi_status_label)
         self.youtube_status_label.setStyleSheet("color: #596579;")
@@ -2830,7 +2836,7 @@ class TabPlaybackPanel(QWidget):
         options = QHBoxLayout()
         options.setSpacing(8)
         options.addWidget(self.record_metronome_check)
-        options.addWidget(QLabel("입력"))
+        options.addWidget(QLabel("Input"))
         self.record_input_combo.setMinimumWidth(180)
         options.addWidget(self.record_input_combo, 1)
         options.addWidget(QLabel("BPM"))
@@ -2838,7 +2844,7 @@ class TabPlaybackPanel(QWidget):
         self.record_bpm_spin.setValue(120)
         self.record_bpm_spin.setFixedWidth(88)
         options.addWidget(self.record_bpm_spin)
-        options.addWidget(QLabel("박자"))
+        options.addWidget(QLabel("Beats"))
         self.record_beats_spin.setRange(1, 12)
         self.record_beats_spin.setValue(4)
         self.record_beats_spin.setFixedWidth(70)
@@ -2882,7 +2888,7 @@ class TabPlaybackPanel(QWidget):
         self.repeat_end_spin.setRange(1, max(1, count))
         self.set_selected_measure_range(0, 0, notify=False)
         self.midi_status_label.setText(
-            f"MIDI OK · {song.tempo} BPM" if song is not None and self.player.is_midi_available else "MIDI 출력 없음"
+            _trf("MIDI OK - {tempo} BPM", tempo=song.tempo) if song is not None and self.player.is_midi_available else tr("No MIDI output")
         )
         self._update_youtube_status()
         if song is not None:
@@ -2940,13 +2946,13 @@ class TabPlaybackPanel(QWidget):
     def _refresh_audio_inputs(self) -> None:
         self.record_input_combo.clear()
         if not self.recorder.available:
-            self.record_input_combo.addItem("녹음 기능 없음", None)
+            self.record_input_combo.addItem(tr("Recording unavailable"), None)
             self.record_input_combo.setEnabled(False)
-            self.record_status_label.setText("QtMultimedia 없음")
+            self.record_status_label.setText(tr("No QtMultimedia"))
             return
         devices = self.recorder.audio_inputs()
         if not devices:
-            self.record_input_combo.addItem("입력 장치 없음", None)
+            self.record_input_combo.addItem(tr("No input device"), None)
             self.record_input_combo.setEnabled(False)
             return
         for device in devices:
@@ -3017,7 +3023,7 @@ class TabPlaybackPanel(QWidget):
     def _start_recording(self) -> None:
         device = self.record_input_combo.currentData()
         if device is None:
-            self.record_status_label.setText("입력 장치 없음")
+            self.record_status_label.setText(tr("No input device"))
             return
         self._mix_click_after_recording = self.record_metronome_check.isChecked() or self.practice_metronome.ticking
         if self.record_metronome_check.isChecked() and not self.practice_metronome.ticking:
@@ -3036,7 +3042,7 @@ class TabPlaybackPanel(QWidget):
         if self.recorder.last_recording is None:
             return
         if _mix_metronome_clicks_into_wav(self.recorder.last_recording, bpm, beats):
-            self.record_status_label.setText(f"녹음 저장+클릭: {self.recorder.last_recording.name}")
+            self.record_status_label.setText(_trf("Recording saved with click: {name}", name=self.recorder.last_recording.name))
         self._refresh_recording_files()
 
     def _toggle_recording_playback(self) -> None:
@@ -3051,7 +3057,7 @@ class TabPlaybackPanel(QWidget):
     def _delete_recording_path(self, path: object) -> None:
         target = path if isinstance(path, Path) else Path(str(path))
         if self._delete_recording_file(target):
-            self.record_status_label.setText(f"녹음 삭제: {target.name}")
+            self.record_status_label.setText(_trf("Recording deleted: {name}", name=target.name))
         self._refresh_recording_files()
 
     def _delete_all_recordings(self) -> None:
@@ -3067,15 +3073,15 @@ class TabPlaybackPanel(QWidget):
             return
         result = QMessageBox.question(
             self,
-            "모든 녹음 삭제",
-            f"녹음 파일 {len(files)}개를 모두 삭제할까요?",
+            tr("Delete all recordings"),
+            _trf("Recording files {count} will be deleted. Continue?", count=len(files)),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if result != QMessageBox.StandardButton.Yes:
             return
         deleted = sum(1 for path in files if self._delete_recording_file(path))
-        self.record_status_label.setText(f"녹음 {deleted}개 삭제")
+        self.record_status_label.setText(_trf("Recordings {count} deleted", count=deleted))
         self._refresh_recording_files()
 
     def _delete_recording_file(self, path: Path) -> bool:
@@ -3094,7 +3100,7 @@ class TabPlaybackPanel(QWidget):
         try:
             path.unlink()
         except OSError as exc:
-            QMessageBox.warning(self, "녹음 삭제 실패", f"{path.name}\n\n{exc}")
+            QMessageBox.warning(self, tr("Delete recording failed"), f"{path.name}\n\n{exc}")
             return False
         if self.recorder.last_recording is not None:
             try:
@@ -3109,7 +3115,7 @@ class TabPlaybackPanel(QWidget):
         self.record_playback_slider.setRange(0, 0)
         self.record_playback_slider.setEnabled(False)
         self.record_play_button.setIcon(_player_icon("play"))
-        self.record_play_button.setToolTip("녹음 재생 F12")
+        self.record_play_button.setToolTip(tr("Play recording F12"))
 
     def _on_recording_saved(self, path: object) -> None:
         if isinstance(path, Path):
@@ -3118,7 +3124,7 @@ class TabPlaybackPanel(QWidget):
 
     def _on_recording_playback_changed(self, playing: bool) -> None:
         self.record_play_button.setIcon(_player_icon("play", "#2563eb" if playing else "#111827"))
-        self.record_play_button.setToolTip("녹음 재생 중단 F12" if playing else "녹음 재생 F12")
+        self.record_play_button.setToolTip(tr("Stop recording playback F12") if playing else tr("Play recording F12"))
 
     def _on_recording_playback_position_changed(self, position: int) -> None:
         if self.record_playback_slider.isSliderDown():
@@ -3158,11 +3164,11 @@ class TabPlaybackPanel(QWidget):
 
     def _update_youtube_status(self) -> None:
         if self.youtube_player.video_id and self.youtube_player.available:
-            self.youtube_status_label.setText(f"YouTube OK · {self.youtube_player.video_id}")
+            self.youtube_status_label.setText(_trf("YouTube OK - {video_id}", video_id=self.youtube_player.video_id))
         elif self.youtube_player.video_id:
-            self.youtube_status_label.setText("YouTube 사용 불가")
+            self.youtube_status_label.setText(tr("YouTube unavailable"))
         else:
-            self.youtube_status_label.setText("YouTube 없음")
+            self.youtube_status_label.setText(tr("No YouTube"))
         if self.youtube_player.view is not None:
             self._position_youtube_view()
             self.youtube_player.view.setVisible(self.youtube_radio.isChecked() and self.youtube_radio.isEnabled())
@@ -3303,7 +3309,11 @@ class TabPlaybackPanel(QWidget):
         self.tab_metronome.stop()
         if self._use_youtube_source():
             if not self.youtube_player.available or not self.youtube_player.video_id:
-                QMessageBox.warning(self, "YouTube unavailable", "YouTube 재생 정보를 사용할 수 없어 MIDI로 재생합니다.")
+                QMessageBox.warning(
+                    self,
+                    tr("YouTube unavailable"),
+                    tr("YouTube playback information is unavailable, so MIDI playback will be used."),
+                )
                 self.midi_radio.setChecked(True)
             else:
                 self.youtube_player.start(
@@ -3320,8 +3330,11 @@ class TabPlaybackPanel(QWidget):
         if not self.player.is_midi_available and not self._midi_warning_shown:
             QMessageBox.warning(
                 self,
-                "MIDI output unavailable",
-                f"MIDI 장치를 열 수 없어 커서만 이동합니다.\n\n{self.player.midi_error}",
+                tr("MIDI output unavailable"),
+                _trf(
+                    "The MIDI device could not be opened, so only the cursor will move.\n\n{error}",
+                    error=self.player.midi_error,
+                ),
             )
             self._midi_warning_shown = True
         self.player.start(
@@ -3474,7 +3487,7 @@ class TabPlaybackPanel(QWidget):
     def _on_playing_changed(self, playing: bool) -> None:
         active = self._is_tab_playing()
         self.play_button.setIcon(_player_icon("play", "#2563eb" if active else "#111827"))
-        self.play_button.setToolTip("정지" if active else "재생")
+        self.play_button.setToolTip(tr("Stop") if active else tr("Play"))
         self.play_button.setStyleSheet("background: #dbeafe;" if active else "")
         self._update_youtube_metronome()
 
@@ -3536,7 +3549,7 @@ class FretboardWidget(QWidget):
         if self.song is None:
             painter.setPen(QColor("#657083"))
             painter.setFont(QFont("Segoe UI", 12))
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Fretboard")
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, tr("Fretboard"))
             return
 
         fret_count = min(24, max(12, self.song.track.fret_count))
@@ -3691,7 +3704,7 @@ class FretboardWidget(QWidget):
         button_height = metrics.height() + 8
         gap = 6
 
-        label = "스케일보기"
+        label = tr("Scale view")
         label_width = metrics.horizontalAdvance(label) + 4
         painter.setPen(QColor("#4b5563"))
         painter.drawText(QRect(x, y, label_width, button_height), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, label)
@@ -3915,13 +3928,13 @@ class FretboardWidget(QWidget):
 
     def _selection_title(self) -> str:
         if self.candidate is None:
-            return f"{self.song.title} - {self.song.track.name}" if self.song else "Fretboard"
+            return f"{self.song.title} - {self.song.track.name}" if self.song else tr("Fretboard")
         measure_text = f"M{self.measure.number}" if self.measure else ""
         if self.measure is not None and self.segment is not None:
             start_percent = round((self.segment.start_in_measure / self.measure.length_ticks) * 100)
             end_percent = round((self.segment.end_in_measure / self.measure.length_ticks) * 100)
             measure_text = f"{measure_text} {start_percent}-{end_percent}%"
-        kind_text = "Scale" if self.kind == "scale" else "Chord"
+        kind_text = tr("Scale") if self.kind == "scale" else tr("Chord")
         prefer_flats = self.song.track.prefer_flats if self.song is not None else None
         notes = " ".join(pitch_class_name(pc, prefer_flats) for pc in self.candidate.pitch_classes)
         name = candidate_display_name(self.candidate, prefer_flats)
@@ -3979,7 +3992,7 @@ class ScalePositionWidget(QWidget):
     def _draw_empty(self, painter: QPainter) -> None:
         painter.setPen(QColor("#657083"))
         painter.setFont(QFont("Segoe UI", 12))
-        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Scale view")
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, tr("Scale view"))
 
     def _draw_fretboard(self, painter: QPainter) -> None:
         if self.song is None:
@@ -4280,7 +4293,7 @@ class ScalePositionWidget(QWidget):
         button_height = metrics.height() + 8
         gap = 6
 
-        label = "스케일보기"
+        label = tr("Scale view")
         label_width = metrics.horizontalAdvance(label) + 4
         painter.setPen(QColor("#4b5563"))
         painter.drawText(QRect(x, y, label_width, button_height), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, label)
@@ -4412,17 +4425,17 @@ class SongScaleUsageWidget(QWidget):
         painter.fillRect(self.rect(), QColor("#fbfcff"))
         self._usage_button_hits = []
         if self.song is None:
-            self._draw_empty(painter, "파일을 열면 곡의 스케일 블럭을 표시합니다.")
+            self._draw_empty(painter, tr("Open a file to show song scale blocks."))
             return
         if self.preferred_scale is None or not self.usages:
-            self._draw_empty(painter, "표시할 곡의 스케일 블럭이 없습니다.")
+            self._draw_empty(painter, tr("No song scale blocks to show."))
             return
         self._draw_fretboard(painter)
 
     def _draw_empty(self, painter: QPainter, text: str) -> None:
         painter.setPen(QColor("#657083"))
         painter.setFont(QFont("Segoe UI", 12))
-        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, text)
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, tr(text))
 
     def _draw_fretboard(self, painter: QPainter) -> None:
         if self.song is None or self.preferred_scale is None:
@@ -4431,7 +4444,7 @@ class SongScaleUsageWidget(QWidget):
         fret_count = min(24, max(12, self.song.track.fret_count))
         usages = self._visible_usages()
         if not usages:
-            self._draw_empty(painter, "표시할 곡의 스케일 블럭이 없습니다.")
+            self._draw_empty(painter, tr("No song scale blocks to show."))
             return
 
         left = 56
@@ -4490,10 +4503,10 @@ class SongScaleUsageWidget(QWidget):
 
     def _title(self) -> str:
         if self.song is None or self.preferred_scale is None:
-            return "곡의 스케일뷰"
+            return tr("Song scale view")
         name = candidate_display_name(self.preferred_scale, self.song.track.prefer_flats)
         total = sum(usage.selected_count for usage in self.usages)
-        return f"최선호 스케일: {name} · 선택 마디 {total}개"
+        return _trf("Best scale: {name} - selected measures {count}", name=name, count=total)
 
     def _visible_usages(self) -> tuple[ScaleBlockUsage, ...]:
         return self.usages[: self.visible_count]
@@ -4637,7 +4650,7 @@ class SongScaleUsageWidget(QWidget):
         button_height = metrics.height() + 8
         gap = 6
 
-        label = "스케일보기"
+        label = tr("Scale view")
         label_width = metrics.horizontalAdvance(label) + 4
         painter.setPen(QColor("#4b5563"))
         painter.drawText(QRect(x, y, label_width, button_height), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, label)
@@ -4776,13 +4789,13 @@ class ChordPositionsWidget(QWidget):
         painter.fillRect(self.rect(), QColor("#f5f7fb"))
 
         if self.song is None:
-            self._draw_empty(painter, "파일을 열면 코드 포지션을 표시합니다.")
+            self._draw_empty(painter, "Open a file to show chord positions.")
             return
         if self.candidate is None:
-            self._draw_empty(painter, "마디의 코드 칩을 누르면 잡을 위치가 표시됩니다.")
+            self._draw_empty(painter, "Click a measure chord chip to show playable positions.")
             return
         if not self.positions:
-            self._draw_empty(painter, "현재 제약 안에서 표시할 코드 포지션을 찾지 못했습니다.")
+            self._draw_empty(painter, "No chord positions were found within the current limits.")
             return
 
         self._draw_title(painter)
@@ -4832,7 +4845,7 @@ class ChordPositionsWidget(QWidget):
     def _draw_empty(self, painter: QPainter, text: str) -> None:
         painter.setPen(QColor("#657083"))
         painter.setFont(QFont("Segoe UI", 11))
-        painter.drawText(self.rect().adjusted(18, 18, -18, -18), Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, text)
+        painter.drawText(self.rect().adjusted(18, 18, -18, -18), Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, tr(text))
 
     def _draw_message(self, painter: QPainter, y: int, text: str) -> None:
         painter.setPen(QColor("#657083"))
@@ -4840,7 +4853,7 @@ class ChordPositionsWidget(QWidget):
         painter.drawText(
             QRect(18, y, self.width() - 36, 120),
             Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap,
-            text,
+            tr(text),
         )
 
     def _draw_category_header(self, painter: QPainter, y: int, category: str) -> None:
@@ -4849,10 +4862,10 @@ class ChordPositionsWidget(QWidget):
         painter.setBrush(QColor("#e8edf5"))
         painter.drawRoundedRect(rect, 6, 6)
         count = len([position for position in self._visible_positions() if category in position.categories])
-        count_text = f"  {count}개" if count else ""
+        count_text = f"  {count}" if count else ""
         painter.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
         painter.setPen(QColor("#253044"))
-        painter.drawText(rect.adjusted(10, 0, -10, 0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, f"{category}{count_text}")
+        painter.drawText(rect.adjusted(10, 0, -10, 0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, f"{tr(category)}{count_text}")
 
     def _draw_category_message(self, painter: QPainter, y: int, text: str) -> None:
         rect = QRect(10, y, max(260, self.width() - 20), 34)
@@ -4861,13 +4874,13 @@ class ChordPositionsWidget(QWidget):
         painter.drawRoundedRect(rect, 7, 7)
         painter.setFont(QFont("Segoe UI", 8))
         painter.setPen(QColor("#657083"))
-        painter.drawText(rect.adjusted(10, 0, -10, 0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextWordWrap, text)
+        painter.drawText(rect.adjusted(10, 0, -10, 0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextWordWrap, tr(text))
 
     def _draw_title(self, painter: QPainter) -> None:
         if self.song is None or self.candidate is None:
             return
         measure_text = f"M{self.measure.number}  " if self.measure is not None else ""
-        title = f"{measure_text}{candidate_display_name(self.candidate, self.song.track.prefer_flats)} 코드 포지션"
+        title = f"{measure_text}{_trf('{name} Chord positions', name=candidate_display_name(self.candidate, self.song.track.prefer_flats))}"
         painter.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
         painter.setPen(QColor("#253044"))
         painter.drawText(QRect(14, 10, self.width() - 28, 26), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, title)
@@ -4885,7 +4898,7 @@ class ChordPositionsWidget(QWidget):
         title = (
             f"{index}. "
             f"{chord_position_display_name(self.candidate, position, self.song.track.prefer_flats)}"
-            f" · {position.label}"
+            f" - {tr(position.label)}"
         )
         painter.drawText(
             rect.adjusted(10, 7, -10, -rect.height() + 41),
@@ -4895,12 +4908,13 @@ class ChordPositionsWidget(QWidget):
 
         fret_text = " ".join("x" if fret == MUTED else str(fret) for fret in reversed(position.frets_high_to_low))
         missing = self._missing_text(position)
-        barre = f" · 바레 {position.barre_fret}프렛" if position.barre_fret is not None else ""
+        barre = _trf(" - barre {fret} frets", fret=position.barre_fret) if position.barre_fret is not None else ""
         range_start, range_end = self._display_fret_range(position)
         meta = (
-            f"손가락 {position.finger_count}개"
-            f"{' + 뮤트 ' + str(position.muted_finger_count) + '개' if position.muted_finger_count else ''}"
-            f"{barre} · {range_start}-{range_end}프렛 · {fret_text} · 생략음 {missing}"
+            _trf("Fingers {count}", count=position.finger_count)
+            + (_trf(" + muted {count}", count=position.muted_finger_count) if position.muted_finger_count else "")
+            + barre
+            + _trf(" - {start}-{end} frets - {frets} - omitted {missing}", start=range_start, end=range_end, frets=fret_text, missing=missing)
         )
         painter.setFont(QFont("Segoe UI", 8))
         painter.setPen(QColor("#526071"))
@@ -5109,12 +5123,12 @@ class ChordPositionsWidget(QWidget):
     def _empty_filter_message(self) -> str:
         parts: list[str] = []
         if self.root_string_filter is not None:
-            parts.append(f"root가 {self.root_string_filter}번줄에 있는")
+            parts.append(_trf("root on string {number}", number=self.root_string_filter))
         if self.category_filter is not None:
-            parts.append(f"{self.category_filter} 카테고리의")
+            parts.append(_trf("{category} category", category=tr(self.category_filter)))
         if parts:
-            return " ".join(parts) + " 코드 포지션이 없습니다."
-        return "표시할 코드 포지션이 없습니다."
+            return _trf("No {filters} chord positions were found.", filters=" ".join(parts))
+        return tr("No chord positions to show.")
 
     def _display_fret_range(self, position: ChordPosition) -> tuple[int, int]:
         if position.fretted_count == 0:
@@ -5128,7 +5142,7 @@ class ChordPositionsWidget(QWidget):
         if self.candidate is None:
             return "-"
         missing = [self._chord_position_degree_label(interval) for interval in position.missing_intervals]
-        return ", ".join(missing) if missing else "없음"
+        return ", ".join(missing) if missing else tr("None")
 
 
 class ChordFinderWidget(QWidget):
@@ -5400,7 +5414,7 @@ class ChordFinderWidget(QWidget):
 
     def _draw_title(self, painter: QPainter) -> None:
         selected_notes = self._selected_note_names()
-        title = f"{selected_notes} 포함 코드" if selected_notes else self._filter_title()
+        title = _trf("{notes} containing chords", notes=selected_notes) if selected_notes else self._filter_title()
         painter.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
         painter.setPen(QColor("#253044"))
         painter.drawText(QRect(14, 10, self.width() - 28, 26), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, title)
@@ -5409,7 +5423,12 @@ class ChordFinderWidget(QWidget):
         painter.drawText(
             QRect(14, 34, self.width() - 28, 18),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            f"{len(self._string_pitches())}줄 · {self._display_fret_count()}프렛 · 선택 {len(self.selected_positions)}개",
+            _trf(
+                "{strings} strings - {frets} frets - selected {selected}",
+                strings=len(self._string_pitches()),
+                frets=self._display_fret_count(),
+                selected=len(self.selected_positions),
+            ),
         )
 
     def _draw_fretboard(self, painter: QPainter) -> None:
@@ -5498,21 +5517,25 @@ class ChordFinderWidget(QWidget):
         y = self._results_start_y()
         selected_notes = self._selected_note_names()
         if self._searching:
-            self._draw_message(painter, y, "코드 검색 중...")
+            self._draw_message(painter, y, "Searching chords...")
             return
         if len(self.selected_positions) == 1:
-            self._draw_message(painter, y, "노트를 2개 이상 선택하면 코드를 찾습니다.")
+            self._draw_message(painter, y, "Select two or more notes to find chords.")
             return
         if not selected_notes and (self.root_filter is None or self.type_filter is None):
-            self._draw_message(painter, y, "선택된 음 없음")
+            self._draw_message(painter, y, "No selected notes")
             return
         if not self.entries:
-            self._draw_message(painter, y, "조건에 맞는 코드가 없습니다.")
+            self._draw_message(painter, y, "No chords match the filters.")
             return
 
-        summary = f"선택음 {selected_notes} · 코드 {self.match_count}개" if selected_notes else f"{self._filter_title()} · 코드 {self.match_count}개"
+        summary = (
+            _trf("Selected notes {notes} - chords {count}", notes=selected_notes, count=self.match_count)
+            if selected_notes
+            else _trf("{filter} - chords {count}", filter=self._filter_title(), count=self.match_count)
+        )
         if self.match_count > len(self.entries):
-            summary += f" · 상위 {len(self.entries)}개 표시"
+            summary += _trf(" - top {count} shown", count=len(self.entries))
         painter.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor("#e8edf5"))
@@ -5535,7 +5558,7 @@ class ChordFinderWidget(QWidget):
         painter.drawRoundedRect(rect, 7, 7)
         painter.setFont(QFont("Segoe UI", 10))
         painter.setPen(QColor("#657083"))
-        painter.drawText(rect.adjusted(12, 0, -12, 0), Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, text)
+        painter.drawText(rect.adjusted(12, 0, -12, 0), Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, tr(text))
 
     def _draw_match_card(
         self,
@@ -5550,9 +5573,9 @@ class ChordFinderWidget(QWidget):
         root = pitch_class_name(match.candidate.root_pc, prefer_flats)
         notes = " ".join(pitch_class_name(pc, prefer_flats) for pc in match.candidate.pitch_classes)
         roles = self._selected_roles_text(match)
-        meta = f"Root {root} · 타입 {match.chord_type.display_name}"
+        meta = _trf("Root {root} - type {type}", root=root, type=match.chord_type.display_name)
         if roles:
-            meta += f" · 선택음 {roles}"
+            meta += _trf(" - selected notes {roles}", roles=roles)
 
         painter.setPen(QPen(QColor("#d6deea"), 1))
         painter.setBrush(QColor("#ffffff"))
@@ -5569,17 +5592,18 @@ class ChordFinderWidget(QWidget):
         painter.drawText(
             rect.adjusted(10, 45, -10, -rect.height() + 74),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap,
-            f"{meta} · 구성음 {notes}",
+            _trf("{meta} - notes {notes}", meta=meta, notes=notes),
         )
 
         range_start, range_end = self._display_fret_range(position)
         fret_text = " ".join("x" if fret == MUTED else str(fret) for fret in reversed(position.frets_high_to_low))
         missing = self._missing_text(position)
-        barre = f" · 바레 {position.barre_fret}프렛" if position.barre_fret is not None else ""
+        barre = _trf(" - barre {fret} frets", fret=position.barre_fret) if position.barre_fret is not None else ""
         position_meta = (
-            f"손가락 {position.finger_count}개"
-            f"{' + 뮤트 ' + str(position.muted_finger_count) + '개' if position.muted_finger_count else ''}"
-            f"{barre} · {range_start}-{range_end}프렛 · {fret_text} · 생략음 {missing}"
+            _trf("Fingers {count}", count=position.finger_count)
+            + (_trf(" + muted {count}", count=position.muted_finger_count) if position.muted_finger_count else "")
+            + barre
+            + _trf(" - {start}-{end} frets - {frets} - omitted {missing}", start=range_start, end=range_end, frets=fret_text, missing=missing)
         )
         painter.setPen(QColor("#526071"))
         painter.drawText(rect.adjusted(10, 64, -10, 0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, position_meta)
@@ -5653,17 +5677,17 @@ class ChordFinderWidget(QWidget):
         return ", ".join(parts)
 
     def _filter_title(self) -> str:
-        root = "전체"
+        root = tr("All")
         if self.root_filter is not None:
             root = pitch_class_name(self.root_filter, self._prefer_flats())
-        chord_type = "전체"
+        chord_type = tr("All")
         if self.type_filter is not None:
             for item in CHORD_FINDER_TYPES:
                 if item.suffix == self.type_filter:
                     chord_type = item.display_name
                     break
         if self.root_filter is None and self.type_filter is None:
-            return "코드 찾기"
+            return tr("Chord finder")
         return f"{root} {chord_type}".strip()
 
     def _pitch_name(self, pitch_class: int) -> str:
@@ -5856,7 +5880,7 @@ class ChordFinderWidget(QWidget):
 
     def _missing_text(self, position: ChordPosition) -> str:
         missing = [self._chord_position_degree_label(interval) for interval in position.missing_intervals]
-        return ", ".join(missing) if missing else "없음"
+        return ", ".join(missing) if missing else tr("None")
 
     def _draw_position_dots_below_frets(self, painter: QPainter, board: QRect, fret_count: int, fret_gap: float) -> None:
         painter.setPen(Qt.PenStyle.NoPen)
@@ -6002,30 +6026,30 @@ class TabAnalyzerWindow(QMainWindow):
         open_action.triggered.connect(self._open_file_dialog)
         file_menu.addAction(open_action)
         toolbar.addAction(open_action)
-        self.recent_files_menu = file_menu.addMenu("최근 연 파일")
+        self.recent_files_menu = file_menu.addMenu("Recent files")
         self._refresh_recent_files_menu()
         file_menu.addSeparator()
-        songsterr_action = QAction("Songsterr에서 타브검색", self)
+        songsterr_action = QAction("Search Songsterr tabs", self)
         songsterr_action.triggered.connect(self._search_songsterr)
         file_menu.addAction(songsterr_action)
         toolbar.addAction(songsterr_action)
-        songsterr_login_action = QAction("Songsterr 로그인", self)
+        songsterr_login_action = QAction("Songsterr login", self)
         songsterr_login_action.triggered.connect(self._login_songsterr)
         file_menu.addAction(songsterr_login_action)
         toolbar.addAction(songsterr_login_action)
         file_menu.addSeparator()
-        memo_save_action = QAction("메모 저장", self)
+        memo_save_action = QAction("Save memo", self)
         memo_save_action.setShortcut(QKeySequence("Ctrl+S"))
         memo_save_action.triggered.connect(self._save_memo)
         file_menu.addAction(memo_save_action)
-        memo_save_as_action = QAction("메모 다른이름으로 저장", self)
+        memo_save_as_action = QAction("Save memo as", self)
         memo_save_as_action.triggered.connect(self._save_memo_as)
         file_menu.addAction(memo_save_as_action)
-        memo_load_action = QAction("메모 불러오기", self)
+        memo_load_action = QAction("Load memo", self)
         memo_load_action.setShortcut(QKeySequence("Ctrl+L"))
         memo_load_action.triggered.connect(self._load_memo_from_dialog)
         file_menu.addAction(memo_load_action)
-        help_action = QAction("매뉴얼", self)
+        help_action = QAction("Manual", self)
         help_action.triggered.connect(self._open_manual)
         help_menu.addAction(help_action)
         about_action = QAction("About", self)
@@ -6068,8 +6092,8 @@ class TabAnalyzerWindow(QMainWindow):
         self.analysis_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.analysis_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.analysis_scroll.setWidget(self.tab_canvas)
-        self.analysis_tab_index = self.top_tabs.addTab(self.analysis_scroll, "분석 마디")
-        self.tab_playback_tab_index = self.top_tabs.addTab(self.tab_playback_panel, "타브 플레이어")
+        self.analysis_tab_index = self.top_tabs.addTab(self.analysis_scroll, "Analysis measures")
+        self.tab_playback_tab_index = self.top_tabs.addTab(self.tab_playback_panel, "Tab player")
         self.top_tabs.currentChanged.connect(self._on_top_tab_changed)
         top_layout.addWidget(self.top_tabs)
 
@@ -6085,7 +6109,7 @@ class TabAnalyzerWindow(QMainWindow):
         scale_filter_layout.addWidget(QLabel("ROOT"))
         self.scale_root_combo.setMinimumWidth(110)
         scale_filter_layout.addWidget(self.scale_root_combo, 0)
-        scale_filter_layout.addWidget(QLabel("종류"))
+        scale_filter_layout.addWidget(QLabel("Type"))
         self.scale_type_combo.setMinimumWidth(220)
         scale_filter_layout.addWidget(self.scale_type_combo, 1)
         scale_position_layout = QVBoxLayout(self.scale_position_panel)
@@ -6099,7 +6123,7 @@ class TabAnalyzerWindow(QMainWindow):
         song_scale_filter_layout = QHBoxLayout()
         song_scale_filter_layout.setContentsMargins(8, 6, 8, 4)
         song_scale_filter_layout.setSpacing(8)
-        song_scale_filter_layout.addWidget(QLabel("표시 개수"))
+        song_scale_filter_layout.addWidget(QLabel("Shown"))
         song_scale_filter_layout.addWidget(self.song_scale_count_spin, 0)
         song_scale_filter_layout.addStretch(1)
         song_scale_usage_layout = QVBoxLayout(self.song_scale_usage_panel)
@@ -6107,11 +6131,11 @@ class TabAnalyzerWindow(QMainWindow):
         song_scale_usage_layout.setSpacing(0)
         song_scale_usage_layout.addLayout(song_scale_filter_layout)
         song_scale_usage_layout.addWidget(self.song_scale_usage_widget, 1)
-        self.measure_tabs.addTab(self.fretboard, "지판뷰")
-        self.measure_tabs.addTab(self.scale_position_panel, "스케일뷰")
-        self.measure_tabs.addTab(self.song_scale_usage_panel, "곡의 스케일뷰")
-        self.measure_tabs.addTab(self.theory_browser, "마디설명")
-        self.measure_tabs.addTab(self.memo_editor, "메모")
+        self.measure_tabs.addTab(self.fretboard, "Fretboard")
+        self.measure_tabs.addTab(self.scale_position_panel, "Scale view")
+        self.measure_tabs.addTab(self.song_scale_usage_panel, "Song scale view")
+        self.measure_tabs.addTab(self.theory_browser, "Measure notes")
+        self.measure_tabs.addTab(self.memo_editor, "Memo")
         self.measure_tabs.setFixedHeight(336)
         left_splitter.addWidget(self.measure_tabs)
         left_splitter.setSizes([510, 336])
@@ -6127,9 +6151,9 @@ class TabAnalyzerWindow(QMainWindow):
         self._populate_category_combo()
         chord_filter_layout = QHBoxLayout()
         chord_filter_layout.setContentsMargins(8, 8, 8, 4)
-        chord_filter_layout.addWidget(QLabel("Root 줄"))
+        chord_filter_layout.addWidget(QLabel("Root string"))
         chord_filter_layout.addWidget(self.root_string_combo, 1)
-        chord_filter_layout.addWidget(QLabel("종류"))
+        chord_filter_layout.addWidget(QLabel("Type"))
         chord_filter_layout.addWidget(self.category_combo, 1)
         chord_panel_layout = QVBoxLayout(self.chord_positions_panel)
         chord_panel_layout.setContentsMargins(0, 0, 0, 0)
@@ -6146,10 +6170,10 @@ class TabAnalyzerWindow(QMainWindow):
         self._populate_chord_finder_controls()
         chord_finder_filter_layout = QHBoxLayout()
         chord_finder_filter_layout.setContentsMargins(8, 8, 8, 4)
-        chord_finder_filter_layout.addWidget(QLabel("Root음"))
+        chord_finder_filter_layout.addWidget(QLabel("Root"))
         self.chord_finder_root_combo.setMinimumWidth(105)
         chord_finder_filter_layout.addWidget(self.chord_finder_root_combo, 1)
-        chord_finder_filter_layout.addWidget(QLabel("타입"))
+        chord_finder_filter_layout.addWidget(QLabel("Type"))
         self.chord_finder_type_combo.setMinimumWidth(120)
         chord_finder_filter_layout.addWidget(self.chord_finder_type_combo, 1)
         chord_finder_panel_layout = QVBoxLayout(self.chord_finder_panel)
@@ -6158,10 +6182,10 @@ class TabAnalyzerWindow(QMainWindow):
         chord_finder_panel_layout.addLayout(chord_finder_filter_layout)
         chord_finder_panel_layout.addWidget(self.chord_finder_scroll)
 
-        self.right_tabs.addTab(self.song_browser, "곡 분석")
-        self.right_tabs.addTab(self.chord_positions_panel, "코드 포지션")
-        self.right_tabs.addTab(self.chord_finder_panel, "코드 찾기")
-        self.right_tabs.addTab(self.tab_playback_panel.recording_tab, "녹음")
+        self.right_tabs.addTab(self.song_browser, "Song analysis")
+        self.right_tabs.addTab(self.chord_positions_panel, "Chord positions")
+        self.right_tabs.addTab(self.chord_finder_panel, "Chord finder")
+        self.right_tabs.addTab(self.tab_playback_panel.recording_tab, "Recording")
         self.right_tabs.setMinimumWidth(330)
         self.right_tabs.setMaximumWidth(560)
 
@@ -6184,7 +6208,7 @@ class TabAnalyzerWindow(QMainWindow):
         self.recent_files_menu.clear()
         recent_files = load_recent_files()
         if not recent_files:
-            empty_action = QAction(tr("최근 파일 없음"), self)
+            empty_action = QAction(tr("No recent files"), self)
             empty_action.setEnabled(False)
             self.recent_files_menu.addAction(empty_action)
             return
@@ -6206,7 +6230,11 @@ class TabAnalyzerWindow(QMainWindow):
         file_path = Path(path)
         if not file_path.exists():
             self._remove_recent_file(file_path)
-            QMessageBox.warning(self, "최근 연 파일", f"파일을 찾을 수 없어 최근 목록에서 제거했습니다.\n\n{file_path}")
+            QMessageBox.warning(
+                self,
+                tr("Recent files"),
+                _trf("The file could not be found and was removed from recent files.\n\n{path}", path=file_path),
+            )
             return
         self.load_file(file_path)
 
@@ -6220,7 +6248,7 @@ class TabAnalyzerWindow(QMainWindow):
 
     def _start_load_worker(self, path: Path, track_index: int | None, include_tracks: bool) -> None:
         if self._load_thread is not None and self._load_thread.isRunning():
-            QMessageBox.information(self, "분석 중", "이미 다른 타브 파일을 분석하는 중입니다.")
+            QMessageBox.information(self, tr("Analyzing"), tr("Another tab file is already being analyzed."))
             return
 
         self._set_loading_enabled(False)
@@ -6241,7 +6269,7 @@ class TabAnalyzerWindow(QMainWindow):
     def _show_load_progress(self) -> None:
         dialog = AnalysisProgressDialog(self)
         self._load_progress_dialog = dialog
-        dialog.set_progress(10, "분석을 시작하는 중입니다.")
+        dialog.set_progress(10, "Starting analysis.")
         dialog.show()
         self._center_load_progress()
         QTimer.singleShot(0, self._center_load_progress)
@@ -6262,7 +6290,7 @@ class TabAnalyzerWindow(QMainWindow):
 
     def _on_load_finished(self, result: object) -> None:
         if self._load_progress_dialog is not None:
-            self._load_progress_dialog.set_progress(100, "완료되었습니다.")
+            self._load_progress_dialog.set_progress(100, "Done.")
         mode, path, tracks, selected_track, song = result
         if Path(path) != self.current_file:
             return
@@ -6275,7 +6303,7 @@ class TabAnalyzerWindow(QMainWindow):
     def _on_load_failed(self, message: str) -> None:
         self._close_load_progress()
         self._set_loading_enabled(True)
-        QMessageBox.critical(self, "Load failed", message)
+        QMessageBox.critical(self, tr("Load failed"), message)
 
     def _on_load_thread_finished(self) -> None:
         self._close_load_progress()
@@ -6299,9 +6327,9 @@ class TabAnalyzerWindow(QMainWindow):
         cookie: str | None = None,
     ) -> None:
         if self._songsterr_thread is not None and self._songsterr_thread.isRunning():
-            QMessageBox.information(self, "Songsterr 처리 중", "이미 Songsterr 작업이 진행 중입니다.")
+            QMessageBox.information(self, tr("Processing Songsterr"), tr("A Songsterr task is already running."))
             return
-        self._show_songsterr_progress("Songsterr에서 곡을 검색하는 중입니다." if mode == "search" else "Songsterr에서 파일을 받는 중입니다.")
+        self._show_songsterr_progress("Searching songs on Songsterr." if mode == "search" else "Downloading the file from Songsterr.")
         self._songsterr_worker = _SongsterrWorker(mode, query=query, result=result, cookie=cookie)
         self._songsterr_thread = QThread(self)
         self._songsterr_worker.moveToThread(self._songsterr_thread)
@@ -6320,8 +6348,8 @@ class TabAnalyzerWindow(QMainWindow):
     def _show_songsterr_progress(self, detail: str) -> None:
         dialog = AnalysisProgressDialog(
             self,
-            window_title="Songsterr 처리 중",
-            title_prefix="Songsterr 처리 중",
+            window_title="Processing Songsterr",
+            title_prefix="Processing Songsterr",
             initial_detail=detail,
         )
         self._songsterr_progress_dialog = dialog
@@ -6346,20 +6374,20 @@ class TabAnalyzerWindow(QMainWindow):
 
     def _on_songsterr_finished(self, result: object) -> None:
         if self._songsterr_progress_dialog is not None:
-            self._songsterr_progress_dialog.set_progress(100, "완료되었습니다.")
+            self._songsterr_progress_dialog.set_progress(100, "Done.")
         self._close_songsterr_progress()
         mode, _request, payload = result
         if mode == "search":
             results = payload
             if not results:
-                QMessageBox.information(self, "Songsterr", "해당 검색어로 찾은 타브가 없습니다.")
+                QMessageBox.information(self, "Songsterr", tr("No tabs were found for that search."))
                 self.statusBar().clearMessage()
                 return
             selected = self._choose_songsterr_result(results)
             if selected is None:
                 self.statusBar().clearMessage()
                 return
-            self.statusBar().showMessage(f"Songsterr export 중: {selected.artist} - {selected.title}")
+            self.statusBar().showMessage(_trf("Exporting from Songsterr: {artist} - {title}", artist=selected.artist, title=selected.title))
             cookie = load_cookie_header() or os.environ.get("SONGSTERR_COOKIE")
             current_thread = self._songsterr_thread
             if current_thread is not None:
@@ -6369,22 +6397,24 @@ class TabAnalyzerWindow(QMainWindow):
             return
 
         path = payload
-        self.statusBar().showMessage(f"Downloaded {path.name}")
+        self.statusBar().showMessage(_trf("Downloaded {name}", name=path.name))
         self.load_file(path)
 
     def _on_songsterr_failed(self, message: str) -> None:
         self._close_songsterr_progress()
-        QMessageBox.warning(self, "Songsterr failed", message)
+        QMessageBox.warning(self, tr("Songsterr failed"), message)
         self.statusBar().clearMessage()
 
     def _on_songsterr_auth_failed(self) -> None:
         self._close_songsterr_progress()
         QMessageBox.warning(
             self,
-            "Songsterr export requires login",
-            "Songsterr에서 타브는 찾았지만 Guitar Pro export는 로그인 또는 export 권한이 필요합니다.\n\n"
-            "이 프로그램은 Songsterr의 공식 export API만 사용합니다. 이미 권한이 있는 계정이라면 "
-            "상단의 Songsterr 로그인 버튼으로 먼저 로그인해 주세요.",
+            tr("Songsterr export requires login"),
+            tr(
+                "A tab was found on Songsterr, but Guitar Pro export requires login or export permission.\n\n"
+                "This app only uses Songsterr's official export API. If your account already has permission, "
+                "log in first with the Songsterr login button at the top."
+            ),
         )
         self.statusBar().clearMessage()
 
@@ -6415,7 +6445,13 @@ class TabAnalyzerWindow(QMainWindow):
         self.right_tabs.setCurrentIndex(0)
         self.setWindowTitle(f"Tab Analyzer - {self.song.title}")
         self.statusBar().showMessage(
-            f"Loaded {self.song.path.name} - {self.song.track.name} - {len(self.song.track.measures)} measures - tuning {self._current_tuning_name()}"
+            _trf(
+                "Loaded {file} - {track} - {measures} measures - tuning {tuning}",
+                file=self.song.path.name,
+                track=self.song.track.name,
+                measures=len(self.song.track.measures),
+                tuning=self._current_tuning_name(),
+            )
         )
 
     def _load_memo_for_current_file(self) -> None:
@@ -6449,7 +6485,7 @@ class TabAnalyzerWindow(QMainWindow):
             except (OSError, UnicodeError, zipfile.BadZipFile) as exc:
                 self._clear_memo_asset_dir()
                 self.measure_memos = {}
-                QMessageBox.warning(self, "메모 불러오기 실패", f"{load_path.name}\n\n{exc}")
+                QMessageBox.warning(self, tr("Load memo failed"), f"{load_path.name}\n\n{exc}")
         self.memo_dirty = False
         self.memo_text_pending = False
         self.memo_icon_refresh_pending = False
@@ -6459,8 +6495,8 @@ class TabAnalyzerWindow(QMainWindow):
             if self.memo_autosave_path.stat().st_mtime >= memo_mtime:
                 result = QMessageBox.question(
                     self,
-                    "자동저장 메모",
-                    "이전에 자동저장 된 메모가 있습니다. 불러올까요?",
+                    tr("Autosaved memo"),
+                    tr("An autosaved memo was found. Load it?"),
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 )
                 if result == QMessageBox.StandardButton.Yes:
@@ -6471,7 +6507,7 @@ class TabAnalyzerWindow(QMainWindow):
                         self.memo_dirty = True
                     except (OSError, UnicodeError, zipfile.BadZipFile) as exc:
                         self._clear_memo_asset_dir()
-                        QMessageBox.warning(self, "자동저장 메모 불러오기 실패", str(exc))
+                        QMessageBox.warning(self, tr("Load autosaved memo failed"), str(exc))
                 else:
                     self.memo_autosave_path.unlink(missing_ok=True)
 
@@ -6485,8 +6521,8 @@ class TabAnalyzerWindow(QMainWindow):
             return True
         result = QMessageBox.question(
             self,
-            "메모 저장",
-            "메모의 변경사항을 저장하시겠습니까?",
+            tr("Save memo"),
+            tr("Save memo changes?"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
         )
         if result == QMessageBox.StandardButton.Cancel:
@@ -6508,17 +6544,22 @@ class TabAnalyzerWindow(QMainWindow):
             self.memo_icon_refresh_pending = False
             if self.memo_autosave_path is not None:
                 self.memo_autosave_path.unlink(missing_ok=True)
-            self.statusBar().showMessage(f"Memo saved: {self.memo_path.name}")
+            self.statusBar().showMessage(_trf("Memo saved: {name}", name=self.memo_path.name))
             self._refresh_memo_icons()
             return True
         except OSError as exc:
-            QMessageBox.warning(self, "메모 저장 실패", str(exc))
+            QMessageBox.warning(self, tr("Save memo failed"), str(exc))
             return False
 
     def _save_memo_as(self) -> bool:
         self._sync_current_memo_from_editor(force=True)
         start = str(self.memo_path or (Path.cwd() / "memo.mmdx"))
-        path, _ = QFileDialog.getSaveFileName(self, "메모 다른이름으로 저장", start, "Tab Analyzer Memo (*.mmdx);;All files (*.*)")
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            tr("Save memo as"),
+            start,
+            f"{tr('Tab Analyzer Memo')} (*.mmdx);;{tr('All files')} (*.*)",
+        )
         if not path:
             return False
         self.memo_path = Path(path)
@@ -6530,7 +6571,12 @@ class TabAnalyzerWindow(QMainWindow):
         if not self._maybe_save_memo_changes():
             return
         start = str((self.memo_path or Path.cwd()).parent if self.memo_path else Path.cwd())
-        path, _ = QFileDialog.getOpenFileName(self, "메모 불러오기", start, "Tab Analyzer Memo (*.mmdx);;Legacy Markdown (*.md);;All files (*.*)")
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            tr("Load memo"),
+            start,
+            f"{tr('Tab Analyzer Memo')} (*.mmdx);;{tr('Legacy Markdown')} (*.md);;{tr('All files')} (*.*)",
+        )
         if not path:
             return
         loaded_path = Path(path)
@@ -6539,10 +6585,10 @@ class TabAnalyzerWindow(QMainWindow):
             self.memo_asset_dir = self._make_memo_asset_dir() if loaded_path.suffix.lower() == ".mmdx" else None
             self.measure_memos = _read_memo_package(loaded_path, self.memo_asset_dir)
         except (OSError, UnicodeError) as exc:
-            QMessageBox.warning(self, "메모 불러오기 실패", str(exc))
+            QMessageBox.warning(self, tr("Load memo failed"), str(exc))
             return
         except zipfile.BadZipFile as exc:
-            QMessageBox.warning(self, "메모 불러오기 실패", str(exc))
+            QMessageBox.warning(self, tr("Load memo failed"), str(exc))
             return
         self.memo_path = loaded_path if loaded_path.suffix.lower() == ".mmdx" else loaded_path.with_suffix(".mmdx")
         self.memo_dirty = False
@@ -6550,7 +6596,7 @@ class TabAnalyzerWindow(QMainWindow):
         self.memo_icon_refresh_pending = False
         self._refresh_memo_icons()
         self._sync_memo_editor()
-        self.statusBar().showMessage(f"Memo loaded: {self.memo_path.name}")
+        self.statusBar().showMessage(_trf("Memo loaded: {name}", name=self.memo_path.name))
 
     def _autosave_memo(self) -> None:
         self._sync_current_memo_from_editor(force=True)
@@ -6655,7 +6701,7 @@ class TabAnalyzerWindow(QMainWindow):
         dialog = self.manual_dialog
         if dialog is None:
             dialog = QDialog(self)
-            dialog.setWindowTitle("Tab Analyzer Manual")
+            dialog.setWindowTitle(tr("Tab Analyzer Manual"))
             dialog.resize(980, 720)
             browser = QTextBrowser(dialog)
             browser.setOpenExternalLinks(True)
@@ -6675,11 +6721,13 @@ class TabAnalyzerWindow(QMainWindow):
         if MANUAL_PATH.exists():
             return
         MANUAL_PATH.parent.mkdir(parents=True, exist_ok=True)
+        title = tr("Tab Analyzer Manual")
+        message = tr("Preparing the manual file.")
         MANUAL_PATH.write_text(
-            """<!doctype html>
+            f"""<!doctype html>
 <html lang="ko">
-<head><meta charset="utf-8"><title>Tab Analyzer Manual</title></head>
-<body><h1>Tab Analyzer Manual</h1><p>매뉴얼 파일을 준비 중입니다.</p></body>
+<head><meta charset="utf-8"><title>{html.escape(title)}</title></head>
+<body><h1>{html.escape(title)}</h1><p>{html.escape(message)}</p></body>
 </html>
 """,
             encoding="utf-8",
@@ -6688,8 +6736,8 @@ class TabAnalyzerWindow(QMainWindow):
     def _open_about(self) -> None:
         QMessageBox.about(
             self,
-            "About Tab Analyzer",
-            f"Tab Analyzer\n\nVersion: {__version__}\nhttps://github.com/swirlpotato/TabAnalyzer",
+            tr("About Tab Analyzer"),
+            _trf("Tab Analyzer\n\nVersion: {version}\n{url}", version=__version__, url="https://github.com/swirlpotato/TabAnalyzer"),
         )
 
     def _populate_track_combo(self, tracks, selected_track: int) -> None:
@@ -6707,9 +6755,9 @@ class TabAnalyzerWindow(QMainWindow):
             start_dir = str(self.song.path.parent)
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Open Guitar Pro file",
+            tr("Open Guitar Pro file"),
             start_dir,
-            "Guitar Pro files (*.gp *.gp3 *.gp4 *.gp5 *.gpx);;All files (*.*)",
+            f"{tr('Guitar Pro files')} (*.gp *.gp3 *.gp4 *.gp5 *.gpx);;{tr('All files')} (*.*)",
         )
         if path:
             self.load_file(path)
@@ -6722,17 +6770,23 @@ class TabAnalyzerWindow(QMainWindow):
             install_command = f'"{sys.executable}" -m pip install PyQt6-WebEngine'
             QMessageBox.warning(
                 self,
-                "Songsterr login unavailable",
-                "Songsterr 로그인을 열기 위해 PyQt6-WebEngine이 필요하지만 import에 실패했습니다.\n\n"
-                f"현재 앱 실행 Python:\n{sys.executable}\n\n"
-                f"이 Python에 설치하려면:\n{install_command}\n\n"
-                f"{type(exc).__name__}:\n{exc}",
+                tr("Songsterr login unavailable"),
+                _trf(
+                    "PyQt6-WebEngine is required to open Songsterr login, but the import failed.\n\n"
+                    "Current app Python:\n{python}\n\n"
+                    "To install into this Python:\n{command}\n\n"
+                    "{error_type}:\n{error}",
+                    python=sys.executable,
+                    command=install_command,
+                    error_type=type(exc).__name__,
+                    error=exc,
+                ),
             )
             return
 
         try:
             dialog = QDialog(self)
-            dialog.setWindowTitle("Songsterr 로그인")
+            dialog.setWindowTitle(tr("Songsterr login"))
             dialog.resize(980, 720)
 
             storage_root = Path.home() / ".tab_analyzer" / "songsterr_web_sessions"
@@ -6748,7 +6802,7 @@ class TabAnalyzerWindow(QMainWindow):
             class SongsterrLoginView(QWebEngineView):
                 def createWindow(self, _window_type):  # type: ignore[override]
                     popup = QDialog(dialog)
-                    popup.setWindowTitle("Songsterr 로그인")
+                    popup.setWindowTitle(tr("Songsterr login"))
                     popup.resize(980, 720)
                     popup_view = SongsterrLoginView(popup)
                     popup_page = QWebEnginePage(profile, popup_view)
@@ -6767,11 +6821,17 @@ class TabAnalyzerWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001 - show WebEngine runtime initialization failures.
             QMessageBox.warning(
                 self,
-                "Songsterr login unavailable",
-                "PyQt6-WebEngine은 설치되어 있지만 브라우저 초기화에 실패했습니다.\n\n"
-                f"현재 앱 실행 Python:\n{sys.executable}\n\n"
-                f"{type(exc).__name__}:\n{exc}\n\n"
-                f"{traceback.format_exc()}",
+                tr("Songsterr login unavailable"),
+                _trf(
+                    "PyQt6-WebEngine is installed, but browser initialization failed.\n\n"
+                    "Current app Python:\n{python}\n\n"
+                    "{error_type}:\n{error}\n\n"
+                    "{traceback}",
+                    python=sys.executable,
+                    error_type=type(exc).__name__,
+                    error=exc,
+                    traceback=traceback.format_exc(),
+                ),
             )
             return
 
@@ -6812,7 +6872,7 @@ class TabAnalyzerWindow(QMainWindow):
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         ok_button = button_box.button(QDialogButtonBox.StandardButton.Ok)
         if ok_button is not None:
-            ok_button.setText("로그인 완료")
+            ok_button.setText(tr("Login done"))
 
         def accept_after_cookie_flush() -> None:
             cookie_store.loadAllCookies()
@@ -6835,7 +6895,7 @@ class TabAnalyzerWindow(QMainWindow):
 
         if not cookies:
             shutil.rmtree(session_root, ignore_errors=True)
-            QMessageBox.warning(self, "Songsterr login", "Songsterr 쿠키를 찾지 못했습니다. 로그인 후 다시 눌러 주세요.")
+            QMessageBox.warning(self, tr("Songsterr login"), tr("Songsterr cookies were not found. Log in and click again."))
             return
 
         cookie_header = "; ".join(f"{name}={value}" for name, value in sorted(cookies.items()))
@@ -6843,29 +6903,29 @@ class TabAnalyzerWindow(QMainWindow):
             save_cookie_header(cookie_header)
         except SongsterrError as exc:
             shutil.rmtree(session_root, ignore_errors=True)
-            QMessageBox.warning(self, "Songsterr login", str(exc))
+            QMessageBox.warning(self, tr("Songsterr login"), str(exc))
             return
 
         shutil.rmtree(session_root, ignore_errors=True)
-        self.statusBar().showMessage("Songsterr login cookie saved")
-        QMessageBox.information(self, "Songsterr login", "Songsterr 로그인 정보가 저장됐습니다.")
+        self.statusBar().showMessage(tr("Songsterr login cookie saved"))
+        QMessageBox.information(self, tr("Songsterr login"), tr("Songsterr login information was saved."))
 
     def _search_songsterr(self) -> None:
         default_query = self._default_songsterr_query()
         query, ok = QInputDialog.getText(
             self,
-            "Songsterr에서 타브검색",
-            "검색어",
+            tr("Search Songsterr tabs"),
+            tr("Search query"),
             text=default_query,
         )
         if not ok:
             return
         query = " ".join(query.split())
         if not query:
-            QMessageBox.information(self, "Songsterr", "검색어를 입력해 주세요.")
+            QMessageBox.information(self, "Songsterr", tr("Enter a search query."))
             return
 
-        self.statusBar().showMessage(f"Songsterr 검색 중: {query}")
+        self.statusBar().showMessage(_trf("Searching Songsterr: {query}", query=query))
         self._start_songsterr_worker("search", query=query)
 
     def _default_songsterr_query(self) -> str:
@@ -6881,8 +6941,8 @@ class TabAnalyzerWindow(QMainWindow):
         labels = [result.display_label for result in results]
         label, ok = QInputDialog.getItem(
             self,
-            "Songsterr 검색 결과",
-            "열 타브 선택",
+            tr("Songsterr search results"),
+            tr("Select tab to open"),
             labels,
             0,
             False,
@@ -6926,7 +6986,11 @@ class TabAnalyzerWindow(QMainWindow):
         self.right_tabs.setCurrentIndex(0)
         if self.song is not None:
             self.statusBar().showMessage(
-                f"Tuning: {self._current_tuning_name()} - global scale {self.song.global_scale.name if self.song.global_scale else '-'}"
+                _trf(
+                    "Tuning: {tuning} - global scale {scale}",
+                    tuning=self._current_tuning_name(),
+                    scale=self.song.global_scale.name if self.song.global_scale else "-",
+                )
             )
 
     def _on_top_tab_changed(self, index: int) -> None:
@@ -6992,7 +7056,7 @@ class TabAnalyzerWindow(QMainWindow):
         try:
             song = self.source_song if preset is None else retune_song(self.source_song, preset.midi_high_to_low)
         except ValueError as exc:
-            QMessageBox.warning(self, "Tuning mismatch", str(exc))
+            QMessageBox.warning(self, tr("Tuning mismatch"), str(exc))
             self.tuning_combo.setCurrentIndex(0)
             song = self.source_song
 
@@ -7019,16 +7083,16 @@ class TabAnalyzerWindow(QMainWindow):
         if preset is not None:
             return preset.display_name
         if self.song is None:
-            return "From file"
-        return "From file (" + " ".join(reversed(self.song.track.string_names)) + ")"
+            return tr("From file")
+        return _trf("From file ({tuning})", tuning=" ".join(reversed(self.song.track.string_names)))
 
     def _populate_root_string_combo(self, string_count: int) -> None:
         current = self.root_string_combo.currentData()
         self.root_string_combo.blockSignals(True)
         self.root_string_combo.clear()
-        self.root_string_combo.addItem("전체", None)
+        self.root_string_combo.addItem(tr("All"), None)
         for string_number in range(string_count, 0, -1):
-            self.root_string_combo.addItem(f"{string_number}번줄", string_number)
+            self.root_string_combo.addItem(_trf("{number} string", number=string_number), string_number)
         index = self.root_string_combo.findData(current)
         self.root_string_combo.setCurrentIndex(index if index >= 0 else 0)
         self.root_string_combo.blockSignals(False)
@@ -7039,9 +7103,9 @@ class TabAnalyzerWindow(QMainWindow):
         current = self.category_combo.currentData()
         self.category_combo.blockSignals(True)
         self.category_combo.clear()
-        self.category_combo.addItem("전체", None)
+        self.category_combo.addItem(tr("All"), None)
         for category in CHORD_POSITION_CATEGORIES:
-            self.category_combo.addItem(category, category)
+            self.category_combo.addItem(tr(category), category)
         index = self.category_combo.findData(current)
         self.category_combo.setCurrentIndex(index if index >= 0 else 0)
         self.category_combo.blockSignals(False)
@@ -7054,7 +7118,7 @@ class TabAnalyzerWindow(QMainWindow):
 
         self.chord_finder_root_combo.blockSignals(True)
         self.chord_finder_root_combo.clear()
-        self.chord_finder_root_combo.addItem("전체", None)
+        self.chord_finder_root_combo.addItem(tr("All"), None)
         for root_pc, label in SCALE_POSITION_ROOT_OPTIONS:
             self.chord_finder_root_combo.addItem(label, root_pc)
         root_index = self.chord_finder_root_combo.findData(current_root)
@@ -7063,9 +7127,9 @@ class TabAnalyzerWindow(QMainWindow):
 
         self.chord_finder_type_combo.blockSignals(True)
         self.chord_finder_type_combo.clear()
-        self.chord_finder_type_combo.addItem("전체", None)
+        self.chord_finder_type_combo.addItem(tr("All"), None)
         for chord_type in CHORD_FINDER_TYPES:
-            self.chord_finder_type_combo.addItem(chord_type.display_name, chord_type.suffix)
+            self.chord_finder_type_combo.addItem(tr(chord_type.display_name), chord_type.suffix)
         type_index = self.chord_finder_type_combo.findData(current_type)
         self.chord_finder_type_combo.setCurrentIndex(type_index if type_index >= 0 else 0)
         self.chord_finder_type_combo.blockSignals(False)
@@ -7091,7 +7155,7 @@ class TabAnalyzerWindow(QMainWindow):
         self.scale_type_combo.clear()
         for name, _intervals in SCALE_POSITION_PATTERNS:
             display_name = SCALE_POSITION_DISPLAY_NAMES.get(name, name)
-            self.scale_type_combo.addItem(display_name, name)
+            self.scale_type_combo.addItem(tr(display_name), name)
         scale_index = self.scale_type_combo.findData(current_scale)
         self.scale_type_combo.setCurrentIndex(scale_index if scale_index >= 0 else 0)
         self.scale_type_combo.blockSignals(False)
@@ -7131,14 +7195,23 @@ class TabAnalyzerWindow(QMainWindow):
             self._update_chord_position_panel(measure, candidate)
             self.right_tabs.setCurrentIndex(1)
         if candidate is None:
-            self.statusBar().showMessage(f"M{measure.number}: no notes")
+            self.statusBar().showMessage(_trf("M{measure}: no notes", measure=measure.number))
             return
         segment_text = ""
         if segment is not None:
             start_percent = round((segment.start_in_measure / measure.length_ticks) * 100)
             end_percent = round((segment.end_in_measure / measure.length_ticks) * 100)
             segment_text = f" {start_percent}-{end_percent}%"
-        self.statusBar().showMessage(f"M{measure.number}{segment_text}: {kind} {candidate.name} ({candidate.score}/100)")
+        self.statusBar().showMessage(
+            _trf(
+                "M{measure}{segment}: {kind} {candidate} ({score}/100)",
+                measure=measure.number,
+                segment=segment_text,
+                kind=tr(kind.capitalize()) if kind in {"scale", "chord"} else kind,
+                candidate=candidate.name,
+                score=candidate.score,
+            )
+        )
 
     def _on_tab_block_selection_changed(self, start: int, end: int) -> None:
         if self.song is None or not self.song.track.measures:
@@ -7160,9 +7233,9 @@ class TabAnalyzerWindow(QMainWindow):
         if fretboard_index >= 0:
             self.measure_tabs.setCurrentIndex(fretboard_index)
         if start == end:
-            self.statusBar().showMessage(f"M{first_measure.number}: 타브 블럭 선택")
+            self.statusBar().showMessage(_trf("M{measure}: tab block selected", measure=first_measure.number))
         else:
-            self.statusBar().showMessage(f"M{first_measure.number}-M{measures[end].number}: 타브 블럭 선택")
+            self.statusBar().showMessage(_trf("M{start}-M{end}: tab block selected", start=first_measure.number, end=measures[end].number))
 
     def _on_tab_playback_measure_changed(self, measure_index: int) -> None:
         if self.song is None or not self.song.track.measures:
@@ -7205,11 +7278,11 @@ class TabAnalyzerWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         if self._load_thread is not None and self._load_thread.isRunning():
-            QMessageBox.information(self, "분석 중", "타브 파일 분석이 끝난 뒤 창을 닫아주세요.")
+            QMessageBox.information(self, tr("Analyzing"), tr("Close the window after tab file analysis finishes."))
             event.ignore()
             return
         if self._songsterr_thread is not None and self._songsterr_thread.isRunning():
-            QMessageBox.information(self, "Songsterr 처리 중", "Songsterr 작업이 끝난 뒤 창을 닫아주세요.")
+            QMessageBox.information(self, tr("Processing Songsterr"), tr("Close the window after the Songsterr task finishes."))
             event.ignore()
             return
         if not self._maybe_save_memo_changes():

@@ -10,6 +10,7 @@ from typing import Iterable
 
 from .analysis import candidate_display_name
 from .gp_loader import BeatData, MeasureData, SegmentData, SongData, TabNote
+from .i18n import tr
 
 
 DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "tab_reading_knowledge.json"
@@ -53,15 +54,15 @@ class TabReadingKnowledge:
     def explain_song_selection(self, song: SongData | None, start_index: int, end_index: int) -> tuple[str, list[str]]:
         if song is None:
             return (
-                "타브 연주 설명",
+                tr("Tab playing explanation"),
                 [
-                    "Guitar Pro 파일을 열고 타브 플레이어에서 마디를 선택하면, 이곳에 운지와 주법 설명이 표시됩니다.",
+                    tr("Open a Guitar Pro file and select measures in the tab player to see fingering and technique explanations here."),
                     html.escape(self.data.get("basics", {}).get("line_order", "")),
                 ],
             )
 
         if not song.track.measures:
-            return f"{html.escape(song.title)}: 타브 연주 설명", ["선택할 마디가 없습니다."]
+            return f"{html.escape(song.title)}: {tr('Tab playing explanation')}", [tr("No measures to select.")]
 
         start_index, end_index = _clamp_range(start_index, end_index, len(song.track.measures))
         rows = [(measure, measure) for measure in song.track.measures[start_index : end_index + 1]]
@@ -89,8 +90,8 @@ class TabReadingKnowledge:
         first = rows[0][0].number
         last = rows[-1][0].number
         if first == last:
-            return f"M{first} 타브 연주 설명"
-        return f"M{first}-M{last} 타브 연주 설명"
+            return f"M{first} {tr('Tab playing explanation')}"
+        return f"M{first}-M{last} {tr('Tab playing explanation')}"
 
     def _paragraphs(
         self,
@@ -105,11 +106,11 @@ class TabReadingKnowledge:
         paragraphs: list[str] = []
 
         if not notes:
-            return ["<b>연주 방법</b>: 이 선택 범위에는 실제로 연주할 프렛 숫자가 없습니다."]
+            return [f"<b>{tr('How to play')}</b>: {tr('This selection has no fretted numbers to play.')}"]
 
         if not compact:
-            paragraphs.append(f"<b>타브 읽기 기준</b>: {html.escape(basics.get('line_order', ''))}")
-            paragraphs.append(f"<b>읽는 순서</b>: {html.escape(basics.get('left_to_right', ''))}")
+            paragraphs.append(f"<b>{tr('Tab reading basics')}</b>: {html.escape(basics.get('line_order', ''))}")
+            paragraphs.append(f"<b>{tr('Reading order')}</b>: {html.escape(basics.get('left_to_right', ''))}")
 
         paragraphs.append(self._range_summary(song, rows, notes, beats))
         paragraphs.append(self._rhythm_summary(rows, beats))
@@ -123,7 +124,8 @@ class TabReadingKnowledge:
             paragraphs.append(technique_text)
         elif not compact:
             paragraphs.append(
-                "<b>주법 표식</b>: 선택 범위에는 별도 주법 표식이 거의 없습니다. 숫자를 정확히 누르고 리듬과 줄 이동을 먼저 맞추면 됩니다."
+                f"<b>{tr('Technique marks')}</b>: "
+                + tr("This selection has few separate technique marks. Fret the numbers accurately first, then match the rhythm and string changes.")
             )
 
         preview = self._sequence_preview(rows)
@@ -135,7 +137,7 @@ class TabReadingKnowledge:
             paragraphs.append(harmony)
 
         if not compact:
-            paragraphs.append(f"<b>연습 팁</b>: {html.escape(basics.get('position', ''))}")
+            paragraphs.append(f"<b>{tr('Practice tip')}</b>: {html.escape(basics.get('position', ''))}")
         return paragraphs
 
     def _range_summary(
@@ -150,35 +152,46 @@ class TabReadingKnowledge:
         fretted = [note.fret for note in notes if not note.is_muted and note.fret > 0]
         open_count = sum(1 for note in notes if not note.is_muted and note.fret == 0)
         muted_count = sum(1 for note in notes if note.is_muted)
-        string_text = ", ".join(f"{number}번줄" for number in string_numbers)
-        fret_text = "오픈 스트링 중심"
+        string_text = ", ".join(tr("string {number}").format(number=number) for number in string_numbers)
+        fret_text = tr("mostly open strings")
         if fretted:
             low, high = min(fretted), max(fretted)
-            fret_text = f"{low}-{high}프렛"
+            fret_text = tr("{low}-{high} frets").format(low=low, high=high)
             if high - low <= 4:
-                fret_text += " 안의 한 포지션"
+                fret_text += tr(" in one position")
             else:
-                fret_text += f" 범위라 중간 이동이 필요"
+                fret_text += tr(" span, shift needed")
         extras = []
         if open_count:
-            extras.append(f"오픈 {open_count}개")
+            extras.append(tr("open {count}").format(count=open_count))
         if muted_count:
-            extras.append(f"뮤트 {muted_count}개")
+            extras.append(tr("muted {count}").format(count=muted_count))
         extra_text = f" ({', '.join(extras)})" if extras else ""
         tempo = f"{song.tempo} BPM"
-        return (
-            f"<b>선택 범위</b>: {measure_count}마디, 연주 이벤트 {len(beats)}개, 음 {len(notes)}개입니다. "
-            f"사용 줄은 {html.escape(string_text)}, 프렛은 {html.escape(fret_text)}{html.escape(extra_text)}입니다. "
-            f"기본 템포는 {tempo}이고 플레이어의 속도 슬라이더가 이 값을 비율로 조절합니다."
+        return f"<b>{tr('Selection')}</b>: " + tr(
+            "{measure_count} measures, {event_count} playing events, {note_count} notes. "
+            "Strings used: {strings}, frets: {frets}{extra}. "
+            "Base tempo is {tempo}, and the player speed slider scales it proportionally."
+        ).format(
+            measure_count=measure_count,
+            event_count=len(beats),
+            note_count=len(notes),
+            strings=html.escape(string_text),
+            frets=html.escape(fret_text),
+            extra=html.escape(extra_text),
+            tempo=tempo,
         )
 
     def _rhythm_summary(self, rows: list[tuple[MeasureData, MeasureData | SegmentData]], beats: list[BeatData]) -> str:
         durations = Counter(_duration_name(beat.duration_ticks) for beat in beats)
-        duration_text = ", ".join(f"{html.escape(name)} {count}개" for name, count in durations.most_common())
+        duration_text = ", ".join(f"{html.escape(name)} x{count}" for name, count in durations.most_common())
         time_signatures = sorted({measure.time_signature for measure, _area in rows})
-        return (
-            f"<b>리듬</b>: 박자표는 {html.escape(', '.join(time_signatures))}이고, "
-            f"주요 길이는 {duration_text}입니다. {html.escape(self.data.get('basics', {}).get('rhythm', ''))}"
+        return f"<b>{tr('Rhythm')}</b>: " + tr(
+            "The time signature is {time_signature}, and the main durations are {durations}. {rhythm}"
+        ).format(
+            time_signature=html.escape(", ".join(time_signatures)),
+            durations=duration_text,
+            rhythm=html.escape(self.data.get("basics", {}).get("rhythm", "")),
         )
 
     def _chord_and_line_summary(self, beats: list[BeatData]) -> str:
@@ -190,12 +203,14 @@ class TabReadingKnowledge:
         if chord_beats:
             max_stack = max(len(beat.notes) for beat in chord_beats)
             parts.append(
-                f"세로로 겹친 음이 {len(chord_beats)}번 나오며, 최대 {max_stack}개 음을 한 번에 잡습니다. "
-                "겹친 숫자는 코드나 더블스톱처럼 같은 타이밍에 치세요."
+                tr(
+                    "Stacked notes occur {count} times, with up to {max_stack} notes played together. "
+                    "Play stacked numbers at the same time, like chords or double-stops."
+                ).format(count=len(chord_beats), max_stack=max_stack)
             )
         if single_beats:
-            parts.append(f"한 음씩 진행하는 이벤트는 {len(single_beats)}번입니다. 줄 이동을 먼저 느리게 확인하세요.")
-        return "<b>블럭 성격</b>: " + " ".join(parts)
+            parts.append(tr("Single-note events occur {count} times. Check string changes slowly first.").format(count=len(single_beats)))
+        return f"<b>{tr('Block character')}</b>: " + " ".join(parts)
 
     def _technique_summary(self, notes: list[TabNote]) -> str:
         counts: Counter[str] = Counter()
@@ -211,8 +226,8 @@ class TabReadingKnowledge:
             play = html.escape(info.get("play", info.get("summary", "")))
             symbol = info.get("symbol", "")
             symbol_text = f" ({html.escape(symbol)})" if symbol else ""
-            details.append(f"{label}{symbol_text} {counts[technique_id]}개: {play}")
-        return "<b>주법 표식</b>: " + " / ".join(details)
+            details.append(f"{label}{symbol_text} x{counts[technique_id]}: {play}")
+        return f"<b>{tr('Technique marks')}</b>: " + " / ".join(details)
 
     def _sequence_preview(self, rows: list[tuple[MeasureData, MeasureData | SegmentData]]) -> str:
         items: list[str] = []
@@ -231,8 +246,8 @@ class TabReadingKnowledge:
         suffix = ""
         total = sum(1 for _measure, area in rows for beat in area.beats if beat.notes)
         if total > len(items):
-            suffix = f" 외 {total - len(items)}개"
-        return "<b>앞부분 순서</b>: " + " / ".join(html.escape(item) for item in items) + html.escape(suffix)
+            suffix = tr(" plus {count} more").format(count=total - len(items))
+        return f"<b>{tr('Opening order')}</b>: " + " / ".join(html.escape(item) for item in items) + html.escape(suffix)
 
     def _harmony_hint(self, song: SongData, rows: list[tuple[MeasureData, MeasureData | SegmentData]]) -> str:
         labels: list[str] = []
@@ -243,10 +258,10 @@ class TabReadingKnowledge:
                 continue
             scale_text = candidate_display_name(scale, song.track.prefer_flats) if scale else "-"
             chord_text = candidate_display_name(chord, song.track.prefer_flats) if chord else "-"
-            labels.append(f"M{measure.number}: 스케일 {scale_text}, 코드 {chord_text}")
+            labels.append(tr("M{measure}: scale {scale}, chord {chord}").format(measure=measure.number, scale=scale_text, chord=chord_text))
         if not labels:
             return ""
-        return "<b>분석과 연결</b>: " + " / ".join(html.escape(label) for label in labels)
+        return f"<b>{tr('Analysis link')}</b>: " + " / ".join(html.escape(label) for label in labels)
 
 
 def _clamp_range(start_index: int, end_index: int, measure_count: int) -> tuple[int, int]:
@@ -266,23 +281,23 @@ def _sorted_techniques(counts: Counter[str]) -> list[str]:
 
 def _duration_name(ticks: int) -> str:
     values = {
-        3840: "온음표",
-        2880: "점2분음표",
-        1920: "2분음표",
-        1440: "점4분음표",
-        960: "4분음표",
-        720: "점8분음표",
-        480: "8분음표",
-        360: "점16분음표",
-        320: "8분 셋잇단",
-        240: "16분음표",
-        160: "16분 셋잇단",
-        120: "32분음표",
+        3840: "whole note",
+        2880: "dotted half note",
+        1920: "half note",
+        1440: "dotted quarter note",
+        960: "quarter note",
+        720: "dotted eighth note",
+        480: "eighth note",
+        360: "dotted sixteenth note",
+        320: "eighth-note triplet",
+        240: "sixteenth note",
+        160: "sixteenth-note triplet",
+        120: "thirty-second note",
     }
     if ticks in values:
-        return values[ticks]
+        return tr(values[ticks])
     beats = ticks / TICKS_PER_QUARTER
-    return f"{beats:.2f}박"
+    return tr("{beats:.2f} beats").format(beats=beats)
 
 
 def _beat_label(measure: MeasureData, beat: BeatData) -> str:
@@ -290,8 +305,8 @@ def _beat_label(measure: MeasureData, beat: BeatData) -> str:
     ticks_per_beat = measure.length_ticks / max(1, numerator)
     beat_position = (beat.start_in_measure / ticks_per_beat) + 1
     if abs(beat_position - round(beat_position)) < 0.02:
-        return f"{int(round(beat_position))}박"
-    return f"{beat_position:.2f}박"
+        return tr("beat {number}").format(number=int(round(beat_position)))
+    return tr("beat {number:.2f}").format(number=beat_position)
 
 
 def _time_signature_numerator(time_signature: str) -> int:
@@ -309,7 +324,7 @@ def _note_text(note: TabNote) -> str:
     else:
         fret = str(note.fret)
     techniques = _short_technique_suffix(note.techniques)
-    return f"{note.string}번줄 {fret}{techniques}"
+    return tr("string {string} {fret}{techniques}").format(string=note.string, fret=fret, techniques=techniques)
 
 
 def _short_technique_suffix(techniques: Iterable[str]) -> str:

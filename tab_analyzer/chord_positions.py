@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .analysis import Candidate, candidate_display_name, pitch_class_name
+from .i18n import tr
 
 
 RULE_DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "chord_position_rules.json"
@@ -28,7 +29,7 @@ CHORD_POSITION_CATEGORIES = (
     "Inversion/Slash",
     "Extended/Color",
     "Power/Sus",
-    "기타",
+    "Other",
 )
 
 
@@ -134,7 +135,7 @@ def chord_position_inversion_label(candidate: Candidate, bass_interval: int) -> 
         return None
     if inversion_index == 0:
         return None
-    return f"{_ordinal(inversion_index)} 인버전"
+    return tr("{ordinal} inversion").format(ordinal=_ordinal(inversion_index))
 
 
 def filter_chord_positions_by_root_string(
@@ -171,7 +172,7 @@ def group_chord_positions_by_category(
 ) -> tuple[tuple[str, tuple[ChordPosition, ...]], ...]:
     grouped = {category: [] for category in CHORD_POSITION_CATEGORIES}
     for position in positions:
-        category = position.category if position.category in grouped else "기타"
+        category = position.category if position.category in grouped else "Other"
         grouped[category].append(position)
     return tuple(
         (category, tuple(category_positions))
@@ -191,22 +192,26 @@ def render_chord_positions_html(
 ) -> str:
     if candidate is None:
         return _page(
-            "코드 포지션",
+            tr("Chord positions"),
             [
-                "마디의 코드 이름을 누르면 이 탭에 잡을 수 있는 코드 포지션을 최대 20개까지 표시합니다.",
-                "스케일을 선택하거나 아무것도 선택하지 않은 상태에서는 기존 곡 분석 탭이 기본으로 활성화됩니다.",
+                tr("Click a measure chord name to show up to 20 playable chord positions in this tab."),
+                tr("When a scale is selected, or nothing is selected, the song analysis tab remains the default."),
             ],
         )
 
     positions = generate_chord_positions(candidate, string_pitches_high_to_low, fret_count)
     chord_name = candidate_display_name(candidate, prefer_flats)
-    title = f"M{measure_number}: {chord_name} 코드 포지션" if measure_number is not None else f"{chord_name} 코드 포지션"
+    title = (
+        tr("M{measure}: {chord} chord positions").format(measure=measure_number, chord=chord_name)
+        if measure_number is not None
+        else tr("{chord} chord positions").format(chord=chord_name)
+    )
     if not positions:
         return _page(
             title,
             [
                 f"{html.escape(song_title)} / {html.escape(track_name)}",
-                "현재 제약 안에서 실용적인 코드 포지션을 찾지 못했습니다. 확장음을 줄이거나 다른 코드 후보를 선택해 보세요.",
+                tr("No practical chord positions were found within the current limits. Try omitting extensions or choosing another chord candidate."),
             ],
         )
 
@@ -247,7 +252,7 @@ def render_chord_positions_html(
         <p class="meta">{html.escape(song_title)} / {html.escape(track_name)}</p>
         {diagrams}
         <hr>
-        <p><b>참고 데이터 출처</b>: {" · ".join(sources)}</p>
+        <p><b>{tr("Reference sources")}</b>: {" - ".join(sources)}</p>
     </body>
     </html>
     """
@@ -620,7 +625,7 @@ def _position_categories(
     if present_intervals - core_intervals:
         categories.append("Extended/Color")
     if not categories:
-        categories.append("기타")
+        categories.append("Other")
     return tuple(dict.fromkeys(categories))
 
 
@@ -628,7 +633,7 @@ def _primary_position_category(categories: tuple[str, ...]) -> str:
     for category in CHORD_POSITION_CATEGORIES:
         if category in categories:
             return category
-    return "기타"
+    return "Other"
 
 
 def _is_triad_category(candidate: Candidate, present_intervals: set[int], sounding_count: int) -> bool:
@@ -867,13 +872,20 @@ def _position_card(
     prefer_flats: bool | None,
 ) -> str:
     fret_text = " ".join("x" if fret == MUTED else str(fret) for fret in reversed(position.frets_high_to_low))
-    missing = ", ".join(_interval_label(interval) for interval in position.missing_intervals) or "없음"
-    barre = f", 바레 {position.barre_fret}프렛" if position.barre_fret is not None else ""
+    missing = ", ".join(_interval_label(interval) for interval in position.missing_intervals) or tr("None")
+    barre = tr(", barre {fret} fret").format(fret=position.barre_fret) if position.barre_fret is not None else ""
     range_start, range_end = _display_fret_range(position)
-    meta = (
-        f"{position.label} · 손가락 {position.finger_count}개"
-        f"{' + 뮤트 ' + str(position.muted_finger_count) + '개' if position.muted_finger_count else ''}"
-        f"{barre} · 범위 {range_start}-{range_end}프렛 · 낮은줄→높은줄: {html.escape(fret_text)} · 생략음: {html.escape(missing)}"
+    meta = tr(
+        "{label} - fingers {finger_count}{muted}{barre} - range {start}-{end} frets - low-to-high strings: {frets} - omitted notes: {missing}"
+    ).format(
+        label=tr(position.label),
+        finger_count=position.finger_count,
+        muted=tr(" + muted {count}").format(count=position.muted_finger_count) if position.muted_finger_count else "",
+        barre=barre,
+        start=range_start,
+        end=range_end,
+        frets=html.escape(fret_text),
+        missing=html.escape(missing),
     )
     return f"""
     <div class="card">
@@ -983,14 +995,14 @@ def _rule_summary() -> str:
     data = _load_rule_data()
     rules = data.get("rules", ())
     if not rules:
-        return "네 프렛 범위, 줄당 한 음, 네 손가락 안에서 가능한 운지를 우선 표시합니다."
+        return tr("Positions within a four-fret span, one note per string, and four fingers are prioritized.")
     return "<br>".join(html.escape(rule) for rule in rules)
 
 
 def _source_links() -> list[str]:
     links = []
     for source in _load_rule_data().get("sources", ()):
-        title = html.escape(source.get("title", "source"))
+        title = html.escape(source.get("title", tr("source")))
         url = html.escape(source.get("url", ""))
         if url:
             links.append(f'<a href="{url}">{title}</a>')
@@ -999,8 +1011,8 @@ def _source_links() -> list[str]:
 
 def _page(title: str, paragraphs: list[str]) -> str:
     body = "\n".join(f"<p>{paragraph}</p>" for paragraph in paragraphs if paragraph)
-    sources = " · ".join(_source_links())
-    source_html = f"<hr><p><b>참고 데이터 출처</b>: {sources}</p>" if sources else ""
+    sources = " - ".join(_source_links())
+    source_html = f"<hr><p><b>{tr('Reference sources')}</b>: {sources}</p>" if sources else ""
     return f"""
     <html>
     <head>

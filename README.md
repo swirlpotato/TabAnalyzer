@@ -2,7 +2,7 @@
 
 PyQt6 desktop app for reading Guitar Pro files and estimating scale/chord candidates per measure.
 
-Current version: `0.3`.
+Current version: `0.4`.
 
 ## Screenshots
 ![Image](docs/screenshot_tabanalyze.png)
@@ -24,8 +24,6 @@ python main.py path\to\song.gp
 
 Songsterr/Guitar Pro 8 style `.gp` files are read from their embedded `Content/score.gpif` data.
 
-When a file contains multiple tracks, the toolbar `Track` selector defaults to the first detected electric guitar track. You can switch tracks after loading, and the analysis recalculates for the selected track.
-
 ## Text summary
 
 ```powershell
@@ -42,15 +40,6 @@ The right explanation pane summarizes the whole song: estimated tonal center, re
 ## Tab player
 
 The main score area has a `Tab player` tab. It shows Guitar Pro-style tablature measures and adds MIDI playback controls:
-
-- select a measure, or Shift-click another measure to select a range
-- enable `Repeat selection` to loop the selected measure range
-- change playback speed from 50% to 200%
-- enable `Metronome` to play a MIDI click that follows the playback speed
-- use the tab zoom slider to enlarge or shrink the tablature view
-- use the right-side `Recording` tab for recording, recording playback, practice metronome controls, and recorded WAV history
-
-Selecting a tab block updates the lower `Measure notes` tab with how to play the selected frets, strings, rhythm, and detected techniques. The tab-reading explanations are backed by `data/tab_reading_knowledge.json`, which summarizes public tab-notation references.
 
 ## Measure memos
 

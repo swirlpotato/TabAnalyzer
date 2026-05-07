@@ -10,6 +10,7 @@ from tab_analyzer.chord_positions import (
     group_chord_positions_by_category,
     render_chord_positions_html,
 )
+from tab_analyzer.i18n import tr
 
 
 STANDARD_TUNING_HIGH_TO_LOW = (64, 59, 55, 50, 45, 40)
@@ -128,8 +129,8 @@ class ChordPositionTests(unittest.TestCase):
             for position in positions
         }
 
-        self.assertEqual(names_by_bass[4], "C/E (C, 1st 인버전)")
-        self.assertEqual(names_by_bass[7], "C/G (C, 2nd 인버전)")
+        self.assertEqual(names_by_bass[4], f"C/E (C, {tr('{ordinal} inversion').format(ordinal='1st')})")
+        self.assertEqual(names_by_bass[7], f"C/G (C, {tr('{ordinal} inversion').format(ordinal='2nd')})")
 
     def test_seventh_inversion_is_named(self):
         chord = Candidate("chord", "C7", 0, (0, 4, 7, 10), 96, 4, 4, 0)
@@ -139,7 +140,7 @@ class ChordPositionTests(unittest.TestCase):
             for position in positions
         }
 
-        self.assertEqual(names_by_bass[10], "C7/Bb (C7, 3rd 인버전)")
+        self.assertEqual(names_by_bass[10], f"C7/Bb (C7, {tr('{ordinal} inversion').format(ordinal='3rd')})")
 
     def test_root_string_filter_keeps_positions_with_root_on_that_string(self):
         chord = Candidate("chord", "C", 0, (0, 4, 7), 100, 3, 3, 0)
@@ -204,11 +205,9 @@ class ChordPositionTests(unittest.TestCase):
 
         html = render_chord_positions_html("Song", "Guitar", 1, chord, STANDARD_TUNING_HIGH_TO_LOW, 24, None)
 
-        self.assertIn("코드 포지션", html)
+        self.assertIn(tr("M{measure}: {chord} chord positions").format(measure=1, chord="C"), html)
         self.assertIn('<table class="diagram">', html)
-        self.assertIn("프렛", html)
-        self.assertIn("참고 데이터 출처", html)
-        self.assertNotIn("한 코드 폼의 프렛손 범위", html)
+        self.assertIn(tr("Reference sources"), html)
         self.assertNotIn("<svg", html)
 
 

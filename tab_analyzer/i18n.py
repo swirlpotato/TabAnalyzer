@@ -77,17 +77,23 @@ def apply_translations(root, language: str | None = None) -> None:
     lang = language or current_language()
     try:
         from PyQt6.QtGui import QAction
-        from PyQt6.QtWidgets import QAbstractButton, QComboBox, QLabel, QLineEdit, QMenu, QTabWidget, QWidget
+        from PyQt6.QtWidgets import QAbstractButton, QComboBox, QLabel, QLineEdit, QMenu, QTabWidget, QTextEdit, QWidget
     except Exception:
         return
 
     widgets: Iterable[QWidget] = [root, *root.findChildren(QWidget)]
     for widget in widgets:
+        if widget.toolTip():
+            widget.setToolTip(tr(widget.toolTip(), lang))
+        if widget.windowTitle():
+            widget.setWindowTitle(tr(widget.windowTitle(), lang))
         if isinstance(widget, QLabel) and widget.text():
             widget.setText(tr(widget.text(), lang))
         if isinstance(widget, QAbstractButton) and widget.text():
             widget.setText(tr(widget.text(), lang))
         if isinstance(widget, QLineEdit) and widget.placeholderText():
+            widget.setPlaceholderText(tr(widget.placeholderText(), lang))
+        if isinstance(widget, QTextEdit) and widget.placeholderText():
             widget.setPlaceholderText(tr(widget.placeholderText(), lang))
         if isinstance(widget, QComboBox):
             for index in range(widget.count()):
