@@ -20,6 +20,77 @@ LANGUAGE_ALIASES = {
     "thai": "th",
     "vietnamese": "vi",
 }
+CHORD_NAME_TERMS = frozenset(
+    {
+        "Major",
+        "Minor",
+        "Power 5",
+        "5",
+        "6",
+        "6/9",
+        "7",
+        "7#11",
+        "7#5",
+        "7#5#9",
+        "7#5b9",
+        "7#9",
+        "7#9b13",
+        "7alt",
+        "7b13",
+        "7b5",
+        "7b5b9",
+        "7b9",
+        "7b9b13",
+        "7sus4",
+        "7sus4b9",
+        "7sus4b9b13",
+        "9",
+        "9#11",
+        "9#5",
+        "9b5",
+        "9sus4",
+        "11",
+        "13",
+        "13#11",
+        "13b9",
+        "13sus4",
+        "add",
+        "add9",
+        "add11",
+        "aug",
+        "aug7",
+        "dim",
+        "dim7",
+        "dimMaj7",
+        "m6",
+        "m6/9",
+        "m7",
+        "m7add11",
+        "m7add13",
+        "m7b5",
+        "m9",
+        "m9b5",
+        "m11",
+        "m11b5",
+        "m13",
+        "madd9",
+        "madd11",
+        "maj7",
+        "maj7#5",
+        "maj7#11",
+        "maj9",
+        "maj9#11",
+        "maj11",
+        "maj13",
+        "mMaj7",
+        "mMaj9",
+        "power",
+        "quartal",
+        "sus",
+        "sus2",
+        "sus4",
+    }
+)
 
 
 def _available_languages() -> tuple[str, ...]:
@@ -48,6 +119,8 @@ def current_language() -> str:
 
 
 def tr(text: str, language: str | None = None) -> str:
+    if text in CHORD_NAME_TERMS:
+        return text
     return _language_map(language or current_language()).get(text, text)
 
 

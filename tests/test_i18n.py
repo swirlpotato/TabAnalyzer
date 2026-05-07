@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import unittest
 from unittest.mock import patch
 
@@ -7,8 +8,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QLabel, QMenu, QPushButton, QTabWidget, QTextEdit, QWidget
 
+from tab_analyzer.chord_finder import CHORD_FINDER_TYPES
 from tab_analyzer import i18n
 from tab_analyzer.i18n import LOCALE_DIR, SUPPORTED_LANGUAGES, apply_translations, current_language, tr
+
+
+FORMAT_PLACEHOLDER_RE = re.compile(r"\{[^{}]+\}")
+HTML_BOLD_TAG_RE = re.compile(r"</?b>")
 
 
 def _locale(language: str) -> dict[str, str]:
@@ -24,6 +30,30 @@ class I18nTests(unittest.TestCase):
         self.assertEqual(set(SUPPORTED_LANGUAGES), {"ko", "ja", "zh", "fr", "en", "es", "th", "vi"})
         self.assertEqual({path.stem for path in LOCALE_DIR.glob("*.json")}, set(SUPPORTED_LANGUAGES))
         self.assertFalse(hasattr(i18n, "_TRANSLATIONS"))
+
+    def test_locale_files_cover_english_keys(self):
+        english = _locale("en")
+        for language in SUPPORTED_LANGUAGES:
+            with self.subTest(language=language):
+                localized = _locale(language)
+                self.assertEqual(set(localized), set(english))
+
+    def test_locale_format_tokens_are_preserved(self):
+        for language in SUPPORTED_LANGUAGES:
+            localized = _locale(language)
+            for source, translated in localized.items():
+                with self.subTest(language=language, source=source):
+                    self.assertEqual(set(FORMAT_PLACEHOLDER_RE.findall(translated)), set(FORMAT_PLACEHOLDER_RE.findall(source)))
+                    self.assertEqual(HTML_BOLD_TAG_RE.findall(translated), HTML_BOLD_TAG_RE.findall(source))
+                    self.assertEqual(translated[: len(source) - len(source.lstrip())], source[: len(source) - len(source.lstrip())])
+                    self.assertEqual(translated[len(translated.rstrip()) :], source[len(source.rstrip()) :])
+
+    def test_chord_type_names_stay_english(self):
+        chord_type_names = {chord_type.display_name for chord_type in CHORD_FINDER_TYPES}
+        for language in SUPPORTED_LANGUAGES:
+            for name in chord_type_names:
+                with self.subTest(language=language, name=name):
+                    self.assertEqual(tr(name, language), name)
 
     def test_missing_language_falls_back_to_english(self):
         self.assertEqual(tr("Play", "de"), "Play")
