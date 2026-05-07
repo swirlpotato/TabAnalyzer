@@ -46,6 +46,7 @@ class BeatData:
     start_in_measure: int
     duration_ticks: int
     notes: tuple[TabNote, ...]
+    tuplet: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -385,7 +386,7 @@ def _convert_gpif_measures(
                     beat = beats.get(beat_id)
                     if beat is None:
                         continue
-                    duration_ticks = _gpif_beat_duration(beat, rhythms)
+                    duration_ticks, tuplet = _gpif_beat_rhythm(beat, rhythms)
                     beat_notes = _gpif_beat_notes(
                         beat,
                         notes,
@@ -401,6 +402,7 @@ def _convert_gpif_measures(
                             start_in_measure=start_in_measure,
                             duration_ticks=duration_ticks,
                             notes=beat_notes,
+                            tuplet=tuplet,
                         )
                     )
                     for note in beat_notes:
@@ -468,11 +470,11 @@ def _gpif_beat_notes(
     return tuple(converted)
 
 
-def _gpif_beat_duration(beat: ET.Element, rhythms: dict[int, ET.Element]) -> int:
+def _gpif_beat_rhythm(beat: ET.Element, rhythms: dict[int, ET.Element]) -> tuple[int, tuple[int, int] | None]:
     rhythm_ref = beat.find("Rhythm")
     rhythm = rhythms.get(int(rhythm_ref.attrib.get("ref", "-1"))) if rhythm_ref is not None else None
     if rhythm is None:
-        return 960
+        return 960, None
 
     value = _clean_gpif_text(rhythm.findtext("NoteValue")).lower()
     duration = {
@@ -495,13 +497,26 @@ def _gpif_beat_duration(beat: ET.Element, rhythms: dict[int, ET.Element]) -> int
             duration += addition
 
     tuplet = rhythm.find("PrimaryTuplet")
+    tuplet_ratio = None
     if tuplet is not None:
         num = int(tuplet.attrib.get("num", "1"))
         den = int(tuplet.attrib.get("den", "1"))
+        tuplet_ratio = _normalized_tuplet(num, den)
         if num:
             duration = round(duration * den / num)
 
-    return max(1, duration)
+    return max(1, duration), tuplet_ratio
+
+
+def _normalized_tuplet(num: object, den: object) -> tuple[int, int] | None:
+    try:
+        numerator = int(num)
+        denominator = int(den)
+    except (TypeError, ValueError):
+        return None
+    if numerator <= 1 or denominator <= 0 or numerator == denominator:
+        return None
+    return numerator, denominator
 
 
 def _gpif_measure_length_ticks(time_signature: str) -> int:
@@ -848,7 +863,9 @@ def _convert_measure(measure: object, string_pitch_by_number: dict[int, int]) ->
         previous_note_by_string: dict[int, object] = {}
         for beat in getattr(voice, "beats", []):
             notes: list[TabNote] = []
-            duration_ticks = int(getattr(getattr(beat, "duration", None), "time", 0) or 0)
+            duration = getattr(beat, "duration", None)
+            duration_ticks = int(getattr(duration, "time", 0) or 0)
+            tuplet = _pyguitarpro_tuplet(duration)
             for note in getattr(beat, "notes", []):
                 string_number = int(getattr(note, "string", 0) or 0)
                 fret = int(getattr(note, "value", 0) or 0)
@@ -885,6 +902,7 @@ def _convert_measure(measure: object, string_pitch_by_number: dict[int, int]) ->
                     start_in_measure=int(getattr(beat, "startInMeasure", 0) or 0),
                     duration_ticks=duration_ticks,
                     notes=tuple(notes),
+                    tuplet=tuplet,
                 )
             )
 
@@ -902,6 +920,11 @@ def _convert_measure(measure: object, string_pitch_by_number: dict[int, int]) ->
         segments=segments,
         analysis=analyze_midi_notes(midi_notes),
     )
+
+
+def _pyguitarpro_tuplet(duration: object | None) -> tuple[int, int] | None:
+    tuplet = getattr(duration, "tuplet", None)
+    return _normalized_tuplet(getattr(tuplet, "enters", 1), getattr(tuplet, "times", 1))
 
 
 def _infer_global_analysis(measures: tuple[MeasureData, ...]) -> MeasureAnalysis:

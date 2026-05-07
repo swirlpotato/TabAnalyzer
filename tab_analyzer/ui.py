@@ -13,12 +13,15 @@ import json
 import zipfile
 from datetime import datetime
 from fractions import Fraction
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from math import pi, sin
 from pathlib import Path, PurePosixPath
-from typing import NamedTuple
-from urllib.parse import unquote
+from threading import Thread
+from typing import Iterable, NamedTuple
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
-from PyQt6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QSize, QThread, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QElapsedTimer, QEvent, QObject, QPoint, QPointF, QRect, QSize, QThread, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QAction, QColor, QFont, QFontMetrics, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QPolygonF, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
@@ -36,7 +39,9 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QProgressBar,
+    QRadioButton,
     QScrollArea,
+    QScrollBar,
     QSizePolicy,
     QSlider,
     QSpinBox,
@@ -81,6 +86,7 @@ from .chord_positions import (
     CHORD_POSITION_CATEGORIES,
     ChordPosition,
     MAX_CHORD_POSITIONS,
+    MAX_DISPLAY_FRET,
     MAX_FRET_SPAN,
     MUTED,
     chord_position_display_name,
@@ -88,8 +94,15 @@ from .chord_positions import (
     generate_chord_positions,
     group_chord_positions_by_category,
 )
+from .chord_finder import (
+    CHORD_FINDER_TYPES,
+    ChordMatch,
+    find_chords_by_filter,
+    find_chords_containing_pitches,
+)
 from .gp_loader import MeasureData, SegmentData, SongData, default_track_index, list_tracks, load_gp_file, retune_song
-from .midi_player import MidiOutput, TabMidiPlayer
+from .i18n import apply_translations, tr
+from .midi_player import MidiOutput, TICKS_PER_QUARTER, TabMidiPlayer
 from .scale_blocks import (
     ScaleBlock,
     ScaleBlockUsage,
@@ -102,10 +115,12 @@ from .scale_blocks import (
     scale_block_spans,
 )
 from .songsterr import (
+    COOKIE_STORE_PATH,
     SONGSTERR_BASE_URL,
     SongsterrAuthError,
     SongsterrError,
     download_guitar_pro,
+    load_details_file,
     load_cookie_header,
     save_cookie_header,
     search_tabs,
@@ -117,6 +132,11 @@ from .version import __version__
 
 PROJECT_ROOT_PATH = Path(__file__).resolve().parent.parent
 SONGSTERR_DOWNLOAD_DIR = PROJECT_ROOT_PATH / "Downloads"
+YOUTUBE_VIEW_WIDTH = 356
+YOUTUBE_VIEW_HEIGHT = 200
+YOUTUBE_VIEW_PIP_MARGIN = 12
+RECENT_FILES_PATH = COOKIE_STORE_PATH.with_name("recent_files.json")
+MAX_RECENT_FILES = 10
 
 MAX_DISPLAY_CANDIDATES = 12
 CHORD_DEGREE_LABELS = {
@@ -212,6 +232,9 @@ SCALE_POSITION_DISPLAY_NAMES = {
     "natural minor": "minor (natural minor)",
 }
 SCALE_POSITION_ROOT_LABELS = dict(SCALE_POSITION_ROOT_OPTIONS)
+DEFAULT_FINDER_STRING_PITCHES_HIGH_TO_LOW = (64, 59, 55, 50, 45, 40)
+DEFAULT_FINDER_FRET_COUNT = 24
+MAX_CHORD_FINDER_RESULTS = 120
 
 
 def fretboard_string_label(midi_note: int, string_index: int, prefer_flats: bool | None) -> str:
@@ -249,6 +272,84 @@ class _MemoIconHit(NamedTuple):
 
 
 APP_ICON_PATH = PROJECT_ROOT_PATH / "assets" / "app_icon.png"
+
+
+def _allow_qt_webengine_autoplay() -> None:
+    flag = "--autoplay-policy=no-user-gesture-required"
+    existing = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+    if flag not in existing.split():
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = f"{existing} {flag}".strip()
+
+
+def _recent_files_store_path(path: str | Path | None = None) -> Path:
+    return Path(path) if path is not None else RECENT_FILES_PATH
+
+
+def _normalized_recent_file_path(path: str | Path) -> Path:
+    return Path(path).expanduser().resolve(strict=False)
+
+
+def load_recent_files(path: str | Path | None = None) -> tuple[Path, ...]:
+    store_path = _recent_files_store_path(path)
+    if not store_path.exists():
+        return ()
+    try:
+        data = json.loads(store_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ()
+    raw_files = data.get("files") if isinstance(data, dict) else data
+    if not isinstance(raw_files, list):
+        return ()
+
+    files: list[Path] = []
+    seen: set[str] = set()
+    for item in raw_files:
+        if not isinstance(item, str) or not item.strip():
+            continue
+        recent_path = _normalized_recent_file_path(item)
+        key = str(recent_path).casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        files.append(recent_path)
+        if len(files) >= MAX_RECENT_FILES:
+            break
+    return tuple(files)
+
+
+def save_recent_files(files: Iterable[str | Path], path: str | Path | None = None) -> Path:
+    store_path = _recent_files_store_path(path)
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in files:
+        recent_path = _normalized_recent_file_path(item)
+        key = str(recent_path).casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(str(recent_path))
+        if len(normalized) >= MAX_RECENT_FILES:
+            break
+    store_path.write_text(json.dumps({"files": normalized}, ensure_ascii=False, indent=2), encoding="utf-8")
+    return store_path
+
+
+def add_recent_file(file_path: str | Path, path: str | Path | None = None) -> tuple[Path, ...]:
+    recent_path = _normalized_recent_file_path(file_path)
+    existing = [item for item in load_recent_files(path) if str(item).casefold() != str(recent_path).casefold()]
+    updated = (recent_path, *existing)
+    save_recent_files(updated, path)
+    return tuple(updated[:MAX_RECENT_FILES])
+
+
+def remove_recent_file(file_path: str | Path, path: str | Path | None = None) -> tuple[Path, ...]:
+    recent_path = _normalized_recent_file_path(file_path)
+    updated = tuple(item for item in load_recent_files(path) if str(item).casefold() != str(recent_path).casefold())
+    save_recent_files(updated, path)
+    return updated
+
+
 APP_ICON_ICO_PATH = PROJECT_ROOT_PATH / "assets" / "app_icon.ico"
 MANUAL_PATH = PROJECT_ROOT_PATH / "docs" / "manual.html"
 MEMO_MARKER = "<!-- TAB_ANALYZER_MEMO_V1 -->"
@@ -943,9 +1044,6 @@ class TabCanvas(QWidget):
                     metrics.horizontalAdvance(text) + 6,
                     metrics.height(),
                 )
-                painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(QColor("#ffffff"))
-                painter.drawRoundedRect(text_rect, 3, 3)
                 painter.setPen(QColor("#111827"))
                 painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, text)
 
@@ -1437,25 +1535,20 @@ class TabScoreWidget(QWidget):
         note_font = QFont("Consolas", max(9, int(11 * self.zoom)), QFont.Weight.DemiBold)
         note_metrics = QFontMetrics(note_font)
         note_positions = self._note_positions(measure, tab_left, tab_width, tab_top, string_gap)
+        beat_positions = self._beat_positions(note_positions)
 
-        self._draw_note_relationships(painter, note_positions)
+        self._draw_rhythm_notation(painter, measure, beat_positions, tab_top, string_gap)
+        self._draw_technique_spans(painter, beat_positions, rect.top(), tab_top)
+        self._draw_note_relationships(painter, note_positions, note_metrics)
 
-        seen_beats: set[int] = set()
-        for x, _y, _note, beat in note_positions:
-            beat_key = id(beat)
-            if beat_key in seen_beats:
-                continue
-            seen_beats.add(beat_key)
-            self._draw_beat_technique_symbols(painter, beat, x, rect.top(), tab_top)
+        for x, y, note, _beat in note_positions:
+            self._draw_note_technique_symbols(painter, note, x, y, note_metrics)
 
         painter.setFont(note_font)
         for x, y, note, _beat in note_positions:
             text = tab_note_text(note)
             width = note_metrics.horizontalAdvance(text) + 8
             text_rect = QRect(x - width // 2, y - note_metrics.height() // 2, width, note_metrics.height())
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor("#ffffff"))
-            painter.drawRoundedRect(text_rect, 3, 3)
             painter.setPen(QColor("#171923"))
             painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, text)
 
@@ -1467,20 +1560,327 @@ class TabScoreWidget(QWidget):
         tab_top: int,
         string_gap: int,
     ) -> list[tuple[int, int, object, BeatData]]:
-        positions: list[tuple[int, int, object, BeatData]] = []
         note_pad = max(10, int(14 * self.zoom))
         effective_width = max(1, tab_width - (note_pad * 2))
+        note_font = QFont("Consolas", max(9, int(11 * self.zoom)), QFont.Weight.DemiBold)
+        note_metrics = QFontMetrics(note_font)
+        min_gap = max(4, int(6 * self.zoom))
+        beat_items: list[tuple[int, BeatData, tuple[object, ...], int]] = []
         for beat in measure.beats:
             if not beat.notes:
                 continue
             ratio = min(1.0, max(0.0, beat.start_in_measure / measure.length_ticks))
             x = tab_left + note_pad + int(ratio * effective_width)
+            half_width = max(
+                1,
+                max((note_metrics.horizontalAdvance(tab_note_text(note)) + 8) // 2 for note in beat.notes),
+            )
+            beat_items.append((x, beat, tuple(beat.notes), half_width))
+
+        adjusted_by_beat = self._spread_close_beat_positions(
+            beat_items,
+            tab_left + note_pad,
+            tab_left + note_pad + effective_width,
+            min_gap,
+        )
+
+        positions: list[tuple[int, int, object, BeatData]] = []
+        for raw_x, beat, notes, _half_width in beat_items:
+            x = adjusted_by_beat.get(id(beat), raw_x)
             for note in beat.notes:
                 y = tab_top + ((note.string - 1) * string_gap)
                 positions.append((x, y, note, beat))
         return positions
 
-    def _draw_note_relationships(self, painter: QPainter, positions: list[tuple[int, int, object, BeatData]]) -> None:
+    def _spread_close_beat_positions(
+        self,
+        beat_items: list[tuple[int, BeatData, tuple[object, ...], int]],
+        min_x: int,
+        max_x: int,
+        min_gap: int,
+    ) -> dict[int, int]:
+        if not beat_items:
+            return {}
+
+        ordered = sorted(beat_items, key=lambda item: (item[1].start_in_measure, item[0]))
+        half_widths = [half_width for _x, _beat, _notes, half_width in ordered]
+        total_text_width = sum(half_width * 2 for half_width in half_widths)
+        available_width = max(1, max_x - min_x)
+        local_gap = min_gap
+        if len(ordered) > 1 and total_text_width + (min_gap * (len(ordered) - 1)) > available_width:
+            local_gap = max(0, (available_width - total_text_width) // (len(ordered) - 1))
+
+        adjusted: list[tuple[BeatData, int, int]] = []
+        previous_right: int | None = None
+        for item, half_width in zip(ordered, half_widths):
+            raw_x, beat, _notes, _half_width = item
+            target_x = max(min_x + half_width, raw_x)
+            if previous_right is not None:
+                target_x = max(target_x, previous_right + local_gap + half_width)
+            adjusted.append((beat, target_x, half_width))
+            previous_right = target_x + half_width
+
+        overflow = adjusted[-1][1] + adjusted[-1][2] - max_x
+        if overflow > 0:
+            adjusted = [(beat, x - overflow, half_width) for beat, x, half_width in adjusted]
+
+        adjusted_by_beat: dict[int, int] = {}
+        previous_right = None
+        for beat, x, half_width in adjusted:
+            target_x = max(min_x + half_width, x)
+            if previous_right is not None:
+                target_x = max(target_x, previous_right + local_gap + half_width)
+            adjusted_by_beat[id(beat)] = target_x
+            previous_right = target_x + half_width
+        return adjusted_by_beat
+
+    def _beat_positions(self, positions: list[tuple[int, int, object, BeatData]]) -> list[tuple[int, BeatData]]:
+        seen: set[int] = set()
+        beat_positions: list[tuple[int, BeatData]] = []
+        for x, _y, _note, beat in positions:
+            key = id(beat)
+            if key in seen:
+                continue
+            seen.add(key)
+            beat_positions.append((x, beat))
+        return sorted(beat_positions, key=lambda item: (item[1].start_in_measure, item[0]))
+
+    def _draw_rhythm_notation(
+        self,
+        painter: QPainter,
+        measure: MeasureData,
+        beat_positions: list[tuple[int, BeatData]],
+        tab_top: int,
+        string_gap: int,
+    ) -> None:
+        if not beat_positions or self.song is None:
+            return
+
+        string_count = len(self.song.track.string_names)
+        tab_bottom = tab_top + ((string_count - 1) * string_gap)
+        stem_top = tab_bottom + int(8 * self.zoom)
+        stem_bottom = tab_bottom + int(28 * self.zoom)
+        beam_gap = max(3, int(4 * self.zoom))
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rhythm_pen = QPen(QColor("#535353"), max(1, int(1.05 * self.zoom)))
+        rhythm_pen.setCapStyle(Qt.PenCapStyle.SquareCap)
+        painter.setPen(rhythm_pen)
+        painter.setBrush(QColor("#535353"))
+
+        for x, beat in beat_positions:
+            if beat.duration_ticks >= 3840:
+                painter.drawEllipse(QPointF(x, stem_top + int(4 * self.zoom)), max(3, int(4 * self.zoom)), max(2, int(2.5 * self.zoom)))
+                continue
+            painter.drawLine(x, stem_top, x, stem_bottom)
+            if beat.duration_ticks >= 1920:
+                painter.drawEllipse(QPointF(x, stem_top + int(3 * self.zoom)), max(3, int(4 * self.zoom)), max(2, int(2.5 * self.zoom)))
+
+        self._draw_rhythm_beams(painter, beat_positions, stem_bottom, beam_gap)
+        self._draw_tuplet_labels(painter, beat_positions, stem_bottom)
+        painter.restore()
+
+    def _draw_rhythm_beams(
+        self,
+        painter: QPainter,
+        beat_positions: list[tuple[int, BeatData]],
+        stem_bottom: int,
+        beam_gap: int,
+    ) -> None:
+        runs = self._rhythm_beam_runs(beat_positions)
+        beam_height = max(2, int(3 * self.zoom))
+        for run in runs:
+            if len(run) == 1:
+                x, beat = run[0]
+                for level in range(self._rhythm_beam_count(beat.duration_ticks)):
+                    y = stem_bottom - (level * beam_gap)
+                    painter.drawRect(QRect(x, y - beam_height // 2, int(10 * self.zoom), beam_height))
+                continue
+
+            min_count = min(self._rhythm_beam_count(beat.duration_ticks) for _x, beat in run)
+            start_x = run[0][0]
+            end_x = run[-1][0]
+            for level in range(min_count):
+                y = stem_bottom - (level * beam_gap)
+                painter.drawRect(QRect(start_x, y - beam_height // 2, max(1, end_x - start_x), beam_height))
+            for x, beat in run:
+                extra = self._rhythm_beam_count(beat.duration_ticks) - min_count
+                for level in range(extra):
+                    y = stem_bottom - ((min_count + level) * beam_gap)
+                    painter.drawRect(QRect(x, y - beam_height // 2, int(10 * self.zoom), beam_height))
+
+    def _rhythm_beam_runs(self, beat_positions: list[tuple[int, BeatData]]) -> list[list[tuple[int, BeatData]]]:
+        runs: list[list[tuple[int, BeatData]]] = []
+        current: list[tuple[int, BeatData]] = []
+        expected_next: int | None = None
+        for item in beat_positions:
+            _x, beat = item
+            if self._rhythm_beam_count(beat.duration_ticks) <= 0:
+                if current:
+                    runs.append(current)
+                    current = []
+                expected_next = beat.start_in_measure + beat.duration_ticks
+                continue
+            if current and expected_next is not None and abs(beat.start_in_measure - expected_next) > 1:
+                runs.append(current)
+                current = []
+            current.append(item)
+            expected_next = beat.start_in_measure + beat.duration_ticks
+        if current:
+            runs.append(current)
+        return runs
+
+    def _draw_tuplet_labels(self, painter: QPainter, beat_positions: list[tuple[int, BeatData]], stem_bottom: int) -> None:
+        groups = self._tuplet_groups(beat_positions)
+        if not groups:
+            return
+        color = QColor("#2f3746")
+        bracket_pen = QPen(color, max(1, int(1.35 * self.zoom)))
+        bracket_pen.setCapStyle(Qt.PenCapStyle.SquareCap)
+        painter.setPen(bracket_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        font = QFont("Segoe UI", max(7, int(8 * self.zoom)), QFont.Weight.DemiBold)
+        painter.setFont(font)
+        metrics = QFontMetrics(font)
+        bracket_y = stem_bottom + int(10 * self.zoom)
+        hook_top = stem_bottom + int(2 * self.zoom)
+        overhang = max(3, int(4 * self.zoom))
+        label_gap = max(3, int(4 * self.zoom))
+        for label, start_x, end_x in groups:
+            if end_x <= start_x:
+                continue
+            bracket_start = start_x - overhang
+            bracket_end = end_x + overhang
+            rect = QRect(
+                int((start_x + end_x) / 2) - metrics.horizontalAdvance(label) // 2 - 4,
+                bracket_y - metrics.height() // 2,
+                metrics.horizontalAdvance(label) + 8,
+                metrics.height(),
+            )
+
+            painter.setPen(bracket_pen)
+            painter.drawLine(bracket_start, bracket_y, max(bracket_start, rect.left() - label_gap), bracket_y)
+            painter.drawLine(min(bracket_end, rect.right() + label_gap), bracket_y, bracket_end, bracket_y)
+            painter.drawLine(bracket_start, hook_top, bracket_start, bracket_y)
+            painter.drawLine(bracket_end, hook_top, bracket_end, bracket_y)
+            painter.drawLine(bracket_start, hook_top, bracket_start + overhang, hook_top)
+            painter.drawLine(bracket_end - overhang, hook_top, bracket_end, hook_top)
+
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor("#fff5d8"))
+            painter.drawRoundedRect(rect.adjusted(-1, 0, 1, 0), 2, 2)
+            painter.setPen(color)
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, label)
+
+    def _tuplet_groups(self, beat_positions: list[tuple[int, BeatData]]) -> list[tuple[str, int, int]]:
+        groups: list[tuple[str, int, int]] = []
+        index = 0
+        while index < len(beat_positions):
+            _x, beat = beat_positions[index]
+            tuplet_info = self._tuplet_info_for_beat(beat)
+            if tuplet_info is None:
+                index += 1
+                continue
+            label, target_count = tuplet_info
+            start_index = index
+            expected_next = beat.start_in_measure + beat.duration_ticks
+            index += 1
+            while index < len(beat_positions):
+                _next_x, next_beat = beat_positions[index]
+                next_tuplet_info = self._tuplet_info_for_beat(next_beat)
+                if next_tuplet_info is None or next_tuplet_info[0] != label:
+                    break
+                if abs(next_beat.start_in_measure - expected_next) > 1:
+                    break
+                expected_next = next_beat.start_in_measure + next_beat.duration_ticks
+                index += 1
+            run_count = index - start_index
+            if run_count >= target_count * 2:
+                continue
+            for group_start in range(start_index, index, target_count):
+                group_end = min(group_start + target_count, index) - 1
+                if group_end > group_start:
+                    groups.append((label, beat_positions[group_start][0], beat_positions[group_end][0]))
+        return groups
+
+    def _tuplet_info_for_beat(self, beat: BeatData) -> tuple[str, int] | None:
+        if beat.tuplet is not None:
+            numerator, _denominator = beat.tuplet
+            if numerator > 1:
+                return str(numerator), numerator
+        label = self._tuplet_label_for_duration(beat.duration_ticks)
+        if label is None:
+            return None
+        return label, int(label)
+
+    def _tuplet_label_for_duration(self, duration_ticks: int) -> str | None:
+        standard = {30, 60, 120, 240, 480, 960, 1920, 3840}
+        for label, numerator, denominator in (("3", 3, 2), ("5", 5, 4), ("6", 6, 4), ("7", 7, 4)):
+            base = duration_ticks * numerator / denominator
+            if any(abs(base - value) <= 1 for value in standard):
+                return label
+        return None
+
+    def _rhythm_beam_count(self, duration_ticks: int) -> int:
+        if duration_ticks <= 60:
+            return 4
+        if duration_ticks <= 120:
+            return 3
+        if duration_ticks <= 240:
+            return 2
+        if duration_ticks <= 480:
+            return 1
+        return 0
+
+    def _draw_technique_spans(
+        self,
+        painter: QPainter,
+        beat_positions: list[tuple[int, BeatData]],
+        row_top: int,
+        tab_top: int,
+    ) -> None:
+        specs = (("palm_mute", "PM"), ("let_ring", "let ring"))
+        base_y = max(row_top + int(16 * self.zoom), tab_top - int(18 * self.zoom))
+        drawn_lane = 0
+        for technique, label in specs:
+            spans = self._technique_spans(beat_positions, technique)
+            if not spans:
+                continue
+            y = base_y - int(drawn_lane * 12 * self.zoom)
+            for start_x, end_x in spans:
+                self._draw_dashed_span_text(painter, label, start_x, end_x, y, QColor("#666666"))
+            drawn_lane += 1
+
+    def _technique_spans(self, beat_positions: list[tuple[int, BeatData]], technique: str) -> list[tuple[int, int]]:
+        spans: list[tuple[int, int]] = []
+        start_x: int | None = None
+        end_x: int | None = None
+        expected_next: int | None = None
+        for x, beat in beat_positions:
+            has_technique = any(technique in getattr(note, "techniques", ()) for note in beat.notes)
+            is_contiguous = expected_next is None or abs(beat.start_in_measure - expected_next) <= 1
+            if has_technique and (start_x is None or is_contiguous):
+                if start_x is None:
+                    start_x = x
+                end_x = x + int(22 * self.zoom)
+            else:
+                if start_x is not None and end_x is not None:
+                    spans.append((start_x, end_x))
+                start_x = x if has_technique else None
+                end_x = x + int(22 * self.zoom) if has_technique else None
+            expected_next = beat.start_in_measure + beat.duration_ticks
+        if start_x is not None and end_x is not None:
+            spans.append((start_x, end_x))
+        return spans
+
+    def _draw_note_relationships(
+        self,
+        painter: QPainter,
+        positions: list[tuple[int, int, object, BeatData]],
+        note_metrics: QFontMetrics,
+    ) -> None:
         by_string: dict[int, list[tuple[int, int, object, BeatData]]] = {}
         for position in positions:
             _x, _y, note, _beat = position
@@ -1503,17 +1903,13 @@ class TabScoreWidget(QWidget):
                 right_techniques = set(right_note.techniques)
 
                 if "slide" in left_techniques:
-                    self._draw_slide_connection(painter, left_x, left_y, right_x, right_y, left_note.fret, right_note.fret)
+                    self._draw_slide_mark_before_note(painter, right_note, right_x, right_y, note_metrics)
                 if "tie" in right_techniques:
                     self._draw_slur_connection(painter, left_x, left_y, right_x, right_y, "")
                 elif "hammer_on" in right_techniques:
                     self._draw_slur_connection(painter, left_x, left_y, right_x, right_y, "")
                 elif "pull_off" in right_techniques:
                     self._draw_slur_connection(painter, left_x, left_y, right_x, right_y, "")
-            if ordered:
-                last_x, last_y, last_note, _last_beat = ordered[-1]
-                if "slide" in set(last_note.techniques):
-                    self._draw_slide_out(painter, last_x, last_y)
         painter.restore()
 
     def _draw_slur_connection(
@@ -1525,16 +1921,16 @@ class TabScoreWidget(QWidget):
         right_y: int,
         label: str,
     ) -> None:
-        start_x = left_x + int(6 * self.zoom)
-        end_x = right_x - int(6 * self.zoom)
+        start_x = left_x + int(5 * self.zoom)
+        end_x = right_x - int(5 * self.zoom)
         if end_x <= start_x:
             return
-        base_y = min(left_y, right_y) - int(8 * self.zoom)
-        height = max(int(5 * self.zoom), min(int(12 * self.zoom), (end_x - start_x) // 5))
+        base_y = min(left_y, right_y) - int(5 * self.zoom)
+        height = max(int(4 * self.zoom), min(int(7 * self.zoom), (end_x - start_x) // 7))
         path = QPainterPath(QPointF(start_x, base_y))
         path.quadTo(QPointF((start_x + end_x) / 2, base_y - height), QPointF(end_x, base_y))
         pen = painter.pen()
-        pen.setWidth(max(1, int(1.6 * self.zoom)))
+        pen.setWidth(max(1, int(1.35 * self.zoom)))
         painter.setPen(pen)
         painter.drawPath(path)
         if label:
@@ -1559,18 +1955,18 @@ class TabScoreWidget(QWidget):
         left_fret: int,
         right_fret: int,
     ) -> None:
-        start_x = left_x + int(9 * self.zoom)
-        end_x = right_x - int(9 * self.zoom)
+        start_x = left_x + int(8 * self.zoom)
+        end_x = right_x - int(8 * self.zoom)
         if end_x <= start_x:
             return
-        offset = int(5 * self.zoom)
+        offset = int(4 * self.zoom)
         if right_fret >= left_fret:
             painter.drawLine(start_x, left_y + offset, end_x, right_y - offset)
         else:
             painter.drawLine(start_x, left_y - offset, end_x, right_y + offset)
 
     def _draw_slide_out(self, painter: QPainter, x: int, y: int) -> None:
-        painter.drawLine(x + int(9 * self.zoom), y + int(5 * self.zoom), x + int(24 * self.zoom), y - int(8 * self.zoom))
+        painter.drawLine(x + int(8 * self.zoom), y + int(4 * self.zoom), x + int(22 * self.zoom), y - int(7 * self.zoom))
 
     def _draw_beat_technique_symbols(
         self,
@@ -1581,16 +1977,16 @@ class TabScoreWidget(QWidget):
         tab_top: int,
     ) -> None:
         techniques = self._beat_techniques(beat)
+        techniques = [technique for technique in techniques if technique in {"palm_mute", "let_ring"}]
         if not techniques:
             return
 
-        symbol_y = max(row_top + int(18 * self.zoom), tab_top - int(28 * self.zoom))
-        slot = max(15, int(17 * self.zoom))
+        symbol_y = max(row_top + int(16 * self.zoom), tab_top - int(18 * self.zoom))
+        slot = max(42, int(54 * self.zoom))
         limited = techniques[:5]
         start_x = x - ((len(limited) - 1) * slot) // 2
         for index, technique in enumerate(limited):
-            bend_semitones = self._beat_bend_semitones(beat) if technique in {"bend", "release_bend"} else None
-            self._draw_technique_symbol(painter, technique, start_x + (index * slot), symbol_y, bend_semitones)
+            self._draw_technique_symbol(painter, technique, start_x + (index * slot), symbol_y)
 
     def _beat_techniques(self, beat: BeatData) -> list[str]:
         priority = {
@@ -1620,6 +2016,101 @@ class TabScoreWidget(QWidget):
         values = [note.bend_semitones for note in beat.notes if note.bend_semitones is not None]
         return max(values) if values else None
 
+    def _draw_note_technique_symbols(
+        self,
+        painter: QPainter,
+        note: object,
+        x: int,
+        y: int,
+        note_metrics: QFontMetrics,
+    ) -> None:
+        techniques = set(getattr(note, "techniques", ()))
+        visible = {
+            "accent",
+            "bend",
+            "harmonic",
+            "release_bend",
+            "staccato",
+            "tapping",
+            "tremolo_picking",
+            "trill",
+            "vibrato",
+        }
+        if not techniques.intersection(visible):
+            return
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        color = QColor("#161616")
+        gray = QColor("#535353")
+        pen = QPen(color, max(1, int(1.15 * self.zoom)))
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        text_width = note_metrics.horizontalAdvance(tab_note_text(note)) + int(6 * self.zoom)
+        text_half = max(5, text_width // 2)
+        lane = 0
+
+        def next_above_y() -> int:
+            nonlocal lane
+            symbol_y = y - int((17 + (lane * 11)) * self.zoom)
+            lane += 1
+            return symbol_y
+
+        if "harmonic" in techniques:
+            self._draw_harmonic_symbol(painter, x - text_half - int(5 * self.zoom), y)
+
+        if "bend" in techniques or "release_bend" in techniques:
+            self._draw_bend_symbol(
+                painter,
+                x + text_half + int(3 * self.zoom),
+                y,
+                release="release_bend" in techniques,
+                semitones=getattr(note, "bend_semitones", None),
+            )
+
+        if "tapping" in techniques:
+            self._draw_tapping_symbol(painter, x, next_above_y())
+        if "trill" in techniques:
+            self._draw_trill_symbol(painter, x, next_above_y())
+        if "vibrato" in techniques:
+            painter.setPen(QPen(gray, max(1, int(1.15 * self.zoom))))
+            self._draw_wavy_symbol(
+                painter,
+                x + text_half + int(3 * self.zoom),
+                next_above_y(),
+                int(24 * self.zoom),
+                max(1, int(1.8 * self.zoom)),
+            )
+            painter.setPen(pen)
+        if "accent" in techniques:
+            self._draw_accent_symbol(painter, x, next_above_y())
+        if "staccato" in techniques:
+            self._draw_staccato_symbol(painter, x, next_above_y())
+        if "tremolo_picking" in techniques:
+            self._draw_tremolo_symbol(painter, x + text_half + int(6 * self.zoom), y + int(14 * self.zoom))
+
+        painter.restore()
+
+    def _draw_slide_mark_before_note(
+        self,
+        painter: QPainter,
+        note: object,
+        x: int,
+        y: int,
+        note_metrics: QFontMetrics,
+    ) -> None:
+        text_width = note_metrics.horizontalAdvance(tab_note_text(note)) + int(6 * self.zoom)
+        text_half = max(5, text_width // 2)
+        self._draw_slide_mark(painter, x - text_half - int(5 * self.zoom), y)
+
+    def _draw_slide_mark(self, painter: QPainter, x: int, y: int) -> None:
+        length = max(8, int(10 * self.zoom))
+        height = max(8, int(11 * self.zoom))
+        painter.drawLine(x - length, y + height // 2, x, y - height // 2)
+
     def _draw_technique_symbol(
         self,
         painter: QPainter,
@@ -1629,9 +2120,9 @@ class TabScoreWidget(QWidget):
         bend_semitones: float | None = None,
     ) -> None:
         painter.save()
-        color = QColor("#2f3746")
-        accent = QColor("#805a13")
-        pen_width = max(1, int(1.35 * self.zoom))
+        color = QColor("#161616")
+        accent = QColor("#666666")
+        pen_width = max(1, int(1.1 * self.zoom))
         painter.setPen(QPen(color, pen_width))
         painter.setBrush(Qt.BrushStyle.NoBrush)
 
@@ -1640,17 +2131,13 @@ class TabScoreWidget(QWidget):
         elif technique == "release_bend":
             self._draw_bend_symbol(painter, x, y, release=True, semitones=bend_semitones)
         elif technique == "vibrato":
-            self._draw_wavy_symbol(painter, x - int(8 * self.zoom), y, int(17 * self.zoom), int(4 * self.zoom))
+            self._draw_wavy_symbol(painter, x - int(8 * self.zoom), y, int(22 * self.zoom), max(1, int(1.8 * self.zoom)))
         elif technique == "staccato":
-            radius = max(2, int(2.2 * self.zoom))
-            painter.setBrush(color)
-            painter.drawEllipse(QPointF(x, y), radius, radius)
+            self._draw_staccato_symbol(painter, x, y)
         elif technique == "accent":
-            span = int(7 * self.zoom)
-            painter.drawLine(x - span, y - span // 2, x + span, y)
-            painter.drawLine(x - span, y + span // 2, x + span, y)
+            self._draw_accent_symbol(painter, x, y)
         elif technique == "harmonic":
-            self._draw_text_symbol(painter, "N.H.", x, y)
+            self._draw_harmonic_symbol(painter, x, y)
         elif technique == "tapping":
             self._draw_tapping_symbol(painter, x, y)
         elif technique == "trill":
@@ -1672,29 +2159,29 @@ class TabScoreWidget(QWidget):
         semitones: float | None = None,
     ) -> None:
         scale = self.zoom
-        pen = QPen(painter.pen().color(), max(1, int(1.3 * scale)))
+        pen = QPen(painter.pen().color(), max(1, int(1.15 * scale)))
         pen.setCapStyle(Qt.PenCapStyle.SquareCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
 
-        start = QPointF(x - int(11 * scale), y + int(8 * scale))
-        peak = QPointF(x + int(5 * scale), y - int(15 * scale))
+        start = QPointF(x, y - int(2 * scale))
+        peak = QPointF(x + int(37 * scale), y - int(43 * scale))
         path = QPainterPath(start)
         path.cubicTo(
-            QPointF(x - int(1 * scale), y + int(8 * scale)),
-            QPointF(x + int(5 * scale), y - int(2 * scale)),
+            QPointF(x + int(20 * scale), y - int(2 * scale)),
+            QPointF(x + int(37 * scale), y - int(18 * scale)),
             peak,
         )
         painter.drawPath(path)
         self._draw_bend_arrow_triangle(painter, peak, up=True)
 
         if release:
-            end = QPointF(x + int(21 * scale), y + int(5 * scale))
+            end = QPointF(x + int(72 * scale), y - int(16 * scale))
             release_path = QPainterPath(peak)
             release_path.cubicTo(
-                QPointF(x + int(14 * scale), y - int(15 * scale)),
-                QPointF(x + int(21 * scale), y - int(8 * scale)),
+                QPointF(x + int(59 * scale), y - int(43 * scale)),
+                QPointF(x + int(72 * scale), y - int(33 * scale)),
                 end,
             )
             painter.drawPath(release_path)
@@ -1706,7 +2193,7 @@ class TabScoreWidget(QWidget):
             painter.setFont(font)
             metrics = QFontMetrics(font)
             label_x = int(peak.x()) - metrics.horizontalAdvance(label) // 2
-            label_y = int(peak.y()) - metrics.height() - int(3 * scale)
+            label_y = int(peak.y()) - metrics.height() - int(2 * scale)
             painter.drawText(
                 QRect(label_x, label_y, metrics.horizontalAdvance(label) + 2, metrics.height()),
                 Qt.AlignmentFlag.AlignCenter,
@@ -1714,7 +2201,7 @@ class TabScoreWidget(QWidget):
             )
 
     def _draw_bend_arrow_triangle(self, painter: QPainter, tip: QPointF, up: bool) -> None:
-        size = max(4, int(4.5 * self.zoom))
+        size = max(4, int(4.1 * self.zoom))
         half = max(3, int(4 * self.zoom))
         path = QPainterPath(tip)
         if up:
@@ -1733,6 +2220,43 @@ class TabScoreWidget(QWidget):
         painter.setPen(old_pen)
         painter.setBrush(old_brush)
 
+    def _draw_harmonic_symbol(self, painter: QPainter, x: int, y: int) -> None:
+        size = max(4, int(4.2 * self.zoom))
+        path = QPainterPath(QPointF(x, y - size))
+        path.lineTo(QPointF(x + size, y))
+        path.lineTo(QPointF(x, y + size))
+        path.lineTo(QPointF(x - size, y))
+        path.closeSubpath()
+        old_pen = painter.pen()
+        old_brush = painter.brush()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#b0b2b6"))
+        painter.drawPath(path)
+        painter.setPen(old_pen)
+        painter.setBrush(old_brush)
+
+    def _draw_accent_symbol(self, painter: QPainter, x: int, y: int) -> None:
+        span = max(5, int(6 * self.zoom))
+        rise = max(2, int(3 * self.zoom))
+        old_pen = painter.pen()
+        accent_pen = QPen(QColor("#161616"), max(1, int(1.15 * self.zoom)))
+        accent_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        accent_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(accent_pen)
+        painter.drawLine(x - span, y - rise, x + span, y)
+        painter.drawLine(x - span, y + rise, x + span, y)
+        painter.setPen(old_pen)
+
+    def _draw_staccato_symbol(self, painter: QPainter, x: int, y: int) -> None:
+        radius = max(2, int(2.4 * self.zoom))
+        old_brush = painter.brush()
+        old_pen = painter.pen()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#161616"))
+        painter.drawEllipse(QPointF(x, y), radius, radius)
+        painter.setPen(old_pen)
+        painter.setBrush(old_brush)
+
     def _bend_amount_label(self, semitones: float | None) -> str:
         if semitones is None or semitones <= 0:
             return ""
@@ -1746,7 +2270,7 @@ class TabScoreWidget(QWidget):
 
     def _draw_wavy_symbol(self, painter: QPainter, x: int, y: int, width: int, amplitude: int) -> None:
         path = QPainterPath(QPointF(x, y))
-        steps = 4
+        steps = max(6, int(width / max(3, int(3.5 * self.zoom))))
         segment = width / steps
         for index in range(steps):
             start_x = x + (index * segment)
@@ -1786,11 +2310,16 @@ class TabScoreWidget(QWidget):
         )
 
     def _draw_tremolo_symbol(self, painter: QPainter, x: int, y: int) -> None:
-        span = int(8 * self.zoom)
-        offset = int(4 * self.zoom)
+        old_pen = painter.pen()
+        tremolo_pen = QPen(QColor("#a5a7ab"), max(1, int(1.05 * self.zoom)))
+        tremolo_pen.setCapStyle(Qt.PenCapStyle.SquareCap)
+        painter.setPen(tremolo_pen)
+        span = max(8, int(10 * self.zoom))
+        offset = max(3, int(4 * self.zoom))
         for index in range(3):
             yy = y - offset + (index * offset)
             painter.drawLine(x - span // 2, yy + offset // 2, x + span // 2, yy - offset // 2)
+        painter.setPen(old_pen)
 
     def _draw_trill_symbol(self, painter: QPainter, x: int, y: int) -> None:
         rect = self._draw_text_symbol(painter, "tr", x - int(5 * self.zoom), y)
@@ -1808,8 +2337,22 @@ class TabScoreWidget(QWidget):
         dash_pen = QPen(color, max(1, int(1 * self.zoom)))
         dash_pen.setStyle(Qt.PenStyle.DashLine)
         painter.setPen(dash_pen)
-        line_y = y + int(6 * self.zoom)
-        painter.drawLine(rect.right() + int(3 * self.zoom), line_y, rect.right() + int(28 * self.zoom), line_y)
+        line_y = y + int(5 * self.zoom)
+        painter.drawLine(rect.right() + int(3 * self.zoom), line_y, rect.right() + int(46 * self.zoom), line_y)
+
+    def _draw_dashed_span_text(self, painter: QPainter, text: str, start_x: int, end_x: int, y: int, color: QColor) -> None:
+        painter.save()
+        painter.setPen(QPen(color, max(1, int(1.05 * self.zoom))))
+        rect = self._draw_text_symbol(painter, text, start_x, y)
+        dash_pen = QPen(color, max(1, int(1 * self.zoom)))
+        dash_pen.setStyle(Qt.PenStyle.DashLine)
+        dash_pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+        painter.setPen(dash_pen)
+        line_y = y + int(5 * self.zoom)
+        line_start = rect.right() + int(4 * self.zoom)
+        line_end = max(line_start + int(12 * self.zoom), end_x)
+        painter.drawLine(line_start, line_y, line_end, line_y)
+        painter.restore()
 
     def _draw_playback_cursor(
         self,
@@ -1901,7 +2444,7 @@ class StandaloneMetronome(QObject):
         self.ticking = False
 
     def set_bpm(self, bpm: int) -> None:
-        self.bpm = max(40, min(250, int(bpm)))
+        self.bpm = max(20, min(500, int(bpm)))
         self.timer.setInterval(self._interval_ms())
 
     def set_beats_per_bar(self, beats: int) -> None:
@@ -1979,10 +2522,6 @@ class RecordingController(QObject):
             media_format.setAudioCodec(QMediaFormat.AudioCodec.Wave)
             self.recorder.setMediaFormat(media_format)
             self.recorder.setQuality(QMediaRecorder.Quality.HighQuality)
-            try:
-                self.recorder.recorderStateChanged.connect(lambda state: self._on_recorder_state_changed(state))
-            except TypeError:
-                pass
             self.player = QMediaPlayer(self)
             self.audio_output = QAudioOutput(self)
             self.player.setAudioOutput(self.audio_output)
@@ -2089,6 +2628,319 @@ class RecordingController(QObject):
         self.recordingSaved.emit(self.last_recording)
 
 
+class YouTubeTabPlayer(QObject):
+    positionChanged = pyqtSignal(int)
+    playingChanged = pyqtSignal(bool)
+    finished = pyqtSignal()
+    availabilityChanged = pyqtSignal(bool)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.parent_widget = parent
+        self.view = None
+        self._web_profile = None
+        self._html_server: ThreadingHTTPServer | None = None
+        self._html_server_thread: Thread | None = None
+        self._html_origin = ""
+        self.available = False
+        self.error = ""
+        self.details: dict = {}
+        self.video_id = ""
+        self._loaded_video_id = ""
+        self.offset_seconds = 0.0
+        self.song: SongData | None = None
+        self.start_tick = 0
+        self.end_tick = 0
+        self.current_tick = 0.0
+        self.speed_percent = 100
+        self.repeat = False
+        self.playing = False
+        self.timer = QTimer(self)
+        self.timer.setInterval(40)
+        self.timer.timeout.connect(self._tick)
+        self.clock = QElapsedTimer()
+        self._load_web_engine()
+
+    def set_details(self, details: dict | None) -> None:
+        self.details = details if isinstance(details, dict) else {}
+        youtube = self.details.get("youtube") if isinstance(self.details, dict) else None
+        if not isinstance(youtube, dict):
+            self.video_id = ""
+            self.offset_seconds = 0.0
+            self.availabilityChanged.emit(False)
+            return
+        self.video_id = str(youtube.get("default_video_id") or "").strip()
+        sync = youtube.get("sync")
+        try:
+            self.offset_seconds = float(sync.get("offset_seconds", 0.0)) if isinstance(sync, dict) else 0.0
+        except (TypeError, ValueError):
+            self.offset_seconds = 0.0
+        if self.video_id and self.available:
+            self._load_video(self.video_id)
+        self.availabilityChanged.emit(bool(self.video_id and self.available))
+
+    def start(
+        self,
+        song: SongData,
+        start_measure_index: int,
+        end_measure_index: int,
+        *,
+        repeat: bool,
+        speed_percent: int,
+        play_from_measure_index: int | None = None,
+        play_from_tick: int | None = None,
+    ) -> None:
+        if not self.available or not self.video_id or not song.track.measures:
+            return
+        self.stop(emit=False)
+        start_measure_index, end_measure_index = self._clamp_range(start_measure_index, end_measure_index, len(song.track.measures))
+        measures = song.track.measures[start_measure_index : end_measure_index + 1]
+        self.song = song
+        self.repeat = repeat
+        self.speed_percent = max(25, min(300, int(speed_percent)))
+        self.start_tick = measures[0].start_tick
+        self.end_tick = measures[-1].start_tick + measures[-1].length_ticks
+        self.current_tick = float(self._play_from_tick(song, start_measure_index, end_measure_index, play_from_measure_index, play_from_tick))
+        self._load_video(self.video_id)
+        self._run_js(f"playAt({self._tick_to_seconds(self.current_tick):.3f}, {self.speed_percent / 100.0:.3f});")
+        self.clock.start()
+        self.timer.start()
+        self.playing = True
+        self.playingChanged.emit(True)
+        self.positionChanged.emit(int(self.current_tick))
+
+    def stop(self, emit: bool = True) -> None:
+        self.timer.stop()
+        self._run_js("pauseVideo();")
+        was_playing = self.playing
+        self.playing = False
+        if emit and was_playing:
+            self.playingChanged.emit(False)
+            self.finished.emit()
+
+    def set_speed_percent(self, value: int) -> None:
+        self.speed_percent = max(25, min(300, int(value)))
+        if self.playing:
+            self._run_js(f"setRate({self.speed_percent / 100.0:.3f});")
+
+    def close(self) -> None:
+        self.stop(emit=False)
+        if self._html_server is not None:
+            self._html_server.shutdown()
+            self._html_server.server_close()
+            self._html_server = None
+            self._html_server_thread = None
+            self._html_origin = ""
+
+    def _tick(self) -> None:
+        if self.song is None or not self.playing:
+            return
+        elapsed_ms = max(0, self.clock.restart())
+        ticks_per_ms = (self.song.tempo * (self.speed_percent / 100.0) * TICKS_PER_QUARTER) / 60000.0
+        self.current_tick += elapsed_ms * ticks_per_ms
+        if self.current_tick >= self.end_tick:
+            if self.repeat:
+                self.current_tick = float(self.start_tick)
+                self._run_js(f"seekToSeconds({self._tick_to_seconds(self.current_tick):.3f});")
+                self.clock.restart()
+                self.positionChanged.emit(self.start_tick)
+                return
+            self.positionChanged.emit(self.end_tick)
+            self.stop()
+            return
+        self.positionChanged.emit(int(self.current_tick))
+
+    def _load_web_engine(self) -> None:
+        _allow_qt_webengine_autoplay()
+        try:
+            from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings
+            from PyQt6.QtWebEngineWidgets import QWebEngineView
+        except Exception as exc:  # noqa: BLE001 - WebEngine is optional.
+            self.error = str(exc)
+            self.available = False
+            return
+
+        self._web_profile = QWebEngineProfile(f"tab-analyzer-youtube-{os.getpid()}-{id(self)}", self)
+        _set_webengine_autoplay_allowed(self._web_profile.settings(), QWebEngineSettings)
+        self.view = QWebEngineView(self.parent_widget)
+        self.view.setPage(QWebEnginePage(self._web_profile, self.view))
+        _set_webengine_autoplay_allowed(self.view.settings(), QWebEngineSettings)
+        _set_webengine_autoplay_allowed(self.view.page().settings(), QWebEngineSettings)
+        _make_youtube_view_non_interactive(self.view)
+        _set_youtube_view_size(self.view)
+        self.view.hide()
+        self.available = True
+
+    def _load_video(self, video_id: str) -> None:
+        if self.view is None:
+            return
+        if self._loaded_video_id == video_id:
+            return
+        origin = self._ensure_html_server()
+        if not origin:
+            return
+        self.view.load(QUrl(_youtube_player_url(origin, video_id)))
+        self._loaded_video_id = video_id
+
+    def _ensure_html_server(self) -> str:
+        if self._html_server is not None and self._html_origin:
+            return self._html_origin
+
+        origin_holder: dict[str, str] = {}
+
+        class YouTubeHtmlHandler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802 - stdlib callback name.
+                parsed = urlparse(self.path)
+                if parsed.path != "/youtube-player":
+                    self.send_error(HTTPStatus.NOT_FOUND)
+                    return
+                video_id = (parse_qs(parsed.query).get("video_id") or [""])[0].strip()
+                if not video_id:
+                    self.send_error(HTTPStatus.BAD_REQUEST)
+                    return
+                payload = _youtube_player_html(video_id, origin_holder["origin"]).encode("utf-8")
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, _format: str, *_args) -> None:
+                return
+
+        try:
+            server = ThreadingHTTPServer(("127.0.0.1", 0), YouTubeHtmlHandler)
+        except OSError as exc:
+            self.error = str(exc)
+            return ""
+        server.daemon_threads = True
+        self._html_server = server
+        self._html_origin = f"http://127.0.0.1:{server.server_port}"
+        origin_holder["origin"] = self._html_origin
+        self._html_server_thread = Thread(target=server.serve_forever, name="TabAnalyzerYouTubeHtmlServer", daemon=True)
+        self._html_server_thread.start()
+        return self._html_origin
+
+    def _run_js(self, script: str) -> None:
+        if self.view is None:
+            return
+        self.view.page().runJavaScript(script)
+
+    def _tick_to_seconds(self, tick: float) -> float:
+        if self.song is None:
+            return max(0.0, self.offset_seconds)
+        song_seconds = (tick / TICKS_PER_QUARTER) * (60.0 / max(1, self.song.tempo))
+        return max(0.0, song_seconds + self.offset_seconds)
+
+    def _play_from_tick(
+        self,
+        song: SongData,
+        start_measure_index: int,
+        end_measure_index: int,
+        play_from_measure_index: int | None,
+        play_from_tick: int | None,
+    ) -> int:
+        if play_from_tick is not None:
+            return max(self.start_tick, min(int(play_from_tick), self.end_tick))
+        if play_from_measure_index is None:
+            return self.start_tick
+        play_from_measure_index = max(start_measure_index, min(play_from_measure_index, end_measure_index))
+        return song.track.measures[play_from_measure_index].start_tick
+
+    def _clamp_range(self, start_index: int, end_index: int, measure_count: int) -> tuple[int, int]:
+        start = max(0, min(start_index, measure_count - 1))
+        end = max(0, min(end_index, measure_count - 1))
+        if end < start:
+            start, end = end, start
+        return start, end
+
+
+def _set_webengine_autoplay_allowed(settings, settings_class) -> None:
+    try:
+        settings.setAttribute(settings_class.WebAttribute.PlaybackRequiresUserGesture, False)
+    except Exception:
+        return
+
+
+def _make_youtube_view_non_interactive(view) -> None:
+    view.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+    view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    view.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+
+
+def _set_youtube_view_size(view) -> None:
+    view.setFixedSize(YOUTUBE_VIEW_WIDTH, YOUTUBE_VIEW_HEIGHT)
+
+
+def _youtube_player_url(origin: str, video_id: str) -> str:
+    return f"{origin.rstrip('/')}/youtube-player?video_id={quote(video_id, safe='')}"
+
+
+def _youtube_player_html(video_id: str, origin: str) -> str:
+    safe_video_id = json.dumps(video_id)
+    safe_origin = json.dumps(origin.rstrip("/"))
+    return f"""
+<!doctype html>
+<html>
+<head>
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<style>
+html, body, #player {{ width: 100%; height: 100%; margin: 0; background: #111; overflow: hidden; }}
+</style>
+</head>
+<body>
+<div id="player"></div>
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+const PLAYER_ORIGIN = {safe_origin};
+let player = null;
+let pending = null;
+function onYouTubeIframeAPIReady() {{
+  player = new YT.Player('player', {{
+    host: 'https://www.youtube-nocookie.com',
+    width: '100%',
+    height: '100%',
+    videoId: {safe_video_id},
+    playerVars: {{
+      enablejsapi: 1,
+      origin: PLAYER_ORIGIN,
+      widget_referrer: PLAYER_ORIGIN,
+      playsinline: 1,
+      rel: 0,
+      modestbranding: 1
+    }},
+    events: {{
+      onReady: function() {{ if (pending) {{ playAt(pending.seconds, pending.rate); pending = null; }} }},
+      onError: function(event) {{ document.body.dataset.youtubeError = String(event.data); }}
+    }}
+  }});
+}}
+function ready() {{ return player && player.seekTo && player.playVideo; }}
+function playAt(seconds, rate) {{
+  if (!ready()) {{ pending = {{ seconds: seconds, rate: rate }}; return; }}
+  try {{ player.setPlaybackRate(rate); }} catch (e) {{}}
+  player.seekTo(seconds, true);
+  player.playVideo();
+}}
+function seekToSeconds(seconds) {{
+  if (!ready()) return;
+  player.seekTo(seconds, true);
+}}
+function setRate(rate) {{
+  if (!ready()) return;
+  try {{ player.setPlaybackRate(rate); }} catch (e) {{}}
+}}
+function pauseVideo() {{
+  if (!ready()) return;
+  player.pauseVideo();
+}}
+</script>
+</body>
+</html>
+"""
+
+
 class MemoEditorWidget(QWidget):
     textChanged = pyqtSignal()
 
@@ -2186,6 +3038,7 @@ class RecordingListRow(QWidget):
 
 class TabPlaybackPanel(QWidget):
     selectionChanged = pyqtSignal(int, int)
+    playbackMeasureChanged = pyqtSignal(int)
     zoomWheelRequested = pyqtSignal(int)
 
     def __init__(self) -> None:
@@ -2197,15 +3050,19 @@ class TabPlaybackPanel(QWidget):
         self._syncing_repeat_toggle = False
         self._midi_warning_shown = False
         self._mix_click_after_recording = False
+        self._playback_measure_index: int | None = None
 
         self.player = TabMidiPlayer()
+        self.youtube_player = YouTubeTabPlayer(self)
         self.practice_metronome = StandaloneMetronome()
+        self.tab_metronome = StandaloneMetronome()
         self.recorder = RecordingController()
         self.score = TabScoreWidget()
         self.score_scroll = QScrollArea()
         self.recording_tab = QWidget()
         self.play_button = _icon_button(_player_icon("play"), "재생")
-        self.stop_button = _icon_button(_player_icon("stop"), "정지")
+        self.midi_radio = QRadioButton("MIDI")
+        self.youtube_radio = QRadioButton("YouTube")
         self.repeat_check = QCheckBox("선택 반복")
         self.metronome_check = QCheckBox("메트로놈")
         self.repeat_start_spin = QSpinBox()
@@ -2226,13 +3083,14 @@ class TabPlaybackPanel(QWidget):
         self.shortcut_label = QLabel("F9 메트로놈 · F10 녹음 · F11 종료 · F12 재생")
         self.record_status_label = QLabel()
         self.midi_status_label = QLabel()
+        self.youtube_status_label = QLabel()
         self._syncing_record_slider = False
+        self.playback_shortcut: QShortcut | None = None
 
         self._build_ui()
         self.score.selectionChanged.connect(self._on_score_selection_changed)
         self.score.zoomWheelRequested.connect(self.zoomWheelRequested.emit)
         self.play_button.clicked.connect(self._play)
-        self.stop_button.clicked.connect(self._stop)
         self.repeat_check.toggled.connect(self._on_repeat_toggled)
         self.metronome_check.toggled.connect(self._on_tab_metronome_changed)
         self.speed_slider.valueChanged.connect(self._on_speed_changed)
@@ -2240,6 +3098,10 @@ class TabPlaybackPanel(QWidget):
         self.repeat_end_spin.valueChanged.connect(self._on_repeat_range_changed)
         self.player.positionChanged.connect(self._on_playback_position_changed)
         self.player.playingChanged.connect(self._on_playing_changed)
+        self.youtube_player.positionChanged.connect(self._on_playback_position_changed)
+        self.youtube_player.playingChanged.connect(self._on_playing_changed)
+        self.youtube_player.availabilityChanged.connect(self._on_youtube_availability_changed)
+        self.midi_radio.toggled.connect(self._on_playback_source_changed)
         self.metronome_button.clicked.connect(self._toggle_practice_metronome)
         self.record_button.clicked.connect(self._start_recording)
         self.record_stop_button.clicked.connect(self._stop_recording)
@@ -2256,6 +3118,7 @@ class TabPlaybackPanel(QWidget):
         self.recorder.playbackChanged.connect(self._on_recording_playback_changed)
         self.recorder.playbackPositionChanged.connect(self._on_recording_playback_position_changed)
         self.recorder.playbackDurationChanged.connect(self._on_recording_playback_duration_changed)
+        self._install_playback_shortcuts()
         self._install_recording_shortcuts()
 
     def _build_ui(self) -> None:
@@ -2266,7 +3129,10 @@ class TabPlaybackPanel(QWidget):
         controls = QHBoxLayout()
         controls.setSpacing(8)
         controls.addWidget(self.play_button)
-        controls.addWidget(self.stop_button)
+        self.youtube_radio.setEnabled(False)
+        self.midi_radio.setChecked(True)
+        controls.addWidget(self.youtube_radio)
+        controls.addWidget(self.midi_radio)
         controls.addWidget(self.repeat_check)
         controls.addWidget(QLabel("시작"))
         self.repeat_start_spin.setRange(1, 1)
@@ -2288,6 +3154,8 @@ class TabPlaybackPanel(QWidget):
         self.midi_status_label.setText("MIDI OK" if self.player.is_midi_available else "MIDI 출력 없음")
         self.midi_status_label.setStyleSheet("color: #596579;")
         controls.addWidget(self.midi_status_label)
+        self.youtube_status_label.setStyleSheet("color: #596579;")
+        controls.addWidget(self.youtube_status_label)
         layout.addLayout(controls)
         self._build_recording_tab()
 
@@ -2296,6 +3164,7 @@ class TabPlaybackPanel(QWidget):
         self.score_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.score_scroll.setWidget(self.score)
         layout.addWidget(self.score_scroll, 1)
+        self._position_youtube_view()
 
     def _build_recording_tab(self) -> None:
         layout = QVBoxLayout(self.recording_tab)
@@ -2346,10 +3215,16 @@ class TabPlaybackPanel(QWidget):
         self._refresh_audio_inputs()
         self._refresh_recording_files()
 
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        self._position_youtube_view()
+
     def set_song(self, song: SongData | None) -> None:
         self._stop()
         self.song = song
+        self._playback_measure_index = None
         self.score.set_song(song)
+        self.youtube_player.set_details(load_details_file(song.path) if song is not None else {})
         count = len(song.track.measures) if song is not None else 1
         self.repeat_start_spin.setRange(1, max(1, count))
         self.repeat_end_spin.setRange(1, max(1, count))
@@ -2357,6 +3232,7 @@ class TabPlaybackPanel(QWidget):
         self.midi_status_label.setText(
             f"MIDI OK · {song.tempo} BPM" if song is not None and self.player.is_midi_available else "MIDI 출력 없음"
         )
+        self._update_youtube_status()
         if song is not None:
             self.record_bpm_spin.setValue(max(40, min(250, song.tempo)))
             self.record_beats_spin.setValue(self._song_beats_per_bar(song))
@@ -2404,7 +3280,9 @@ class TabPlaybackPanel(QWidget):
 
     def shutdown(self) -> None:
         self.player.close()
+        self.youtube_player.close()
         self.practice_metronome.close()
+        self.tab_metronome.close()
         self.recorder.close()
 
     def _refresh_audio_inputs(self) -> None:
@@ -2470,6 +3348,11 @@ class TabPlaybackPanel(QWidget):
         QShortcut(QKeySequence(Qt.Key.Key_F10), self, activated=self._start_recording)
         QShortcut(QKeySequence(Qt.Key.Key_F11), self, activated=self._stop_recording)
         QShortcut(QKeySequence(Qt.Key.Key_F12), self, activated=self._toggle_recording_playback)
+
+    def _install_playback_shortcuts(self) -> None:
+        self.playback_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Space), self)
+        self.playback_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.playback_shortcut.activated.connect(self._play)
 
     def _toggle_practice_metronome(self) -> None:
         self._on_record_metronome_changed()
@@ -2610,9 +3493,89 @@ class TabPlaybackPanel(QWidget):
 
     def _on_tab_metronome_changed(self, enabled: bool) -> None:
         self.player.set_metronome_enabled(enabled)
+        self._update_youtube_metronome()
+
+    def _on_youtube_availability_changed(self, available: bool) -> None:
+        self.youtube_radio.setEnabled(available)
+        if available:
+            self.youtube_radio.setChecked(True)
+        else:
+            self.midi_radio.setChecked(True)
+        self._update_youtube_metronome()
+        self._update_youtube_status()
+
+    def _update_youtube_status(self) -> None:
+        if self.youtube_player.video_id and self.youtube_player.available:
+            self.youtube_status_label.setText(f"YouTube OK · {self.youtube_player.video_id}")
+        elif self.youtube_player.video_id:
+            self.youtube_status_label.setText("YouTube 사용 불가")
+        else:
+            self.youtube_status_label.setText("YouTube 없음")
+        if self.youtube_player.view is not None:
+            self._position_youtube_view()
+            self.youtube_player.view.setVisible(self.youtube_radio.isChecked() and self.youtube_radio.isEnabled())
+
+    def _position_youtube_view(self) -> None:
+        view = self.youtube_player.view
+        if view is None:
+            return
+        viewport = self.score_scroll.viewport()
+        top_left = viewport.mapTo(self, QPoint(0, 0))
+        width = YOUTUBE_VIEW_WIDTH
+        height = YOUTUBE_VIEW_HEIGHT
+        x = top_left.x() + max(0, viewport.width() - width - YOUTUBE_VIEW_PIP_MARGIN)
+        y = top_left.y() + max(0, viewport.height() - height - YOUTUBE_VIEW_PIP_MARGIN)
+        view.setGeometry(x, y, width, height)
+        view.raise_()
+
+    def _on_playback_source_changed(self, _checked: bool) -> None:
+        self._update_youtube_status()
+        if not self._is_tab_playing() or self.song is None:
+            self._update_youtube_metronome()
+            return
+        tick = self._current_playback_tick()
+        current = self._measure_index_for_tick(tick)
+        repeat = self.repeat_check.isChecked()
+        end = self.repeat_end_spin.value() - 1 if repeat else len(self.song.track.measures) - 1
+        start = self.repeat_start_spin.value() - 1 if repeat else current
+        self._start_playback(start, end, repeat=repeat, play_from=current, play_from_tick=tick)
+
+    def _use_youtube_source(self) -> bool:
+        return self.youtube_radio.isChecked() and self.youtube_radio.isEnabled()
+
+    def _is_tab_playing(self) -> bool:
+        return self.player.playing or self.youtube_player.playing
+
+    def _current_playback_tick(self) -> int:
+        if self.youtube_player.playing:
+            return int(self.youtube_player.current_tick)
+        return int(self.player.current_tick)
 
     def _on_practice_metronome_changed(self, ticking: bool) -> None:
         self.metronome_button.setStyleSheet("background: #fee2e2;" if ticking else "")
+
+    def _sync_tab_metronome_settings(self) -> None:
+        if self.song is None:
+            return
+        bpm = round(self.song.tempo * (self.speed_slider.value() / 100.0))
+        self.tab_metronome.set_bpm(bpm)
+        self.tab_metronome.set_beats_per_bar(self._song_beats_per_bar(self.song))
+
+    def _should_run_youtube_metronome(self) -> bool:
+        return (
+            self.song is not None
+            and self.metronome_check.isChecked()
+            and self._use_youtube_source()
+            and self.youtube_player.playing
+        )
+
+    def _update_youtube_metronome(self) -> None:
+        if self._should_run_youtube_metronome():
+            self._sync_tab_metronome_settings()
+            if not self.tab_metronome.ticking:
+                self.tab_metronome.start()
+            return
+        self.tab_metronome.stop()
 
     def _on_recording_changed(self, recording: bool) -> None:
         self.record_button.setEnabled(not recording)
@@ -2628,7 +3591,7 @@ class TabPlaybackPanel(QWidget):
             return 4
 
     def _on_score_selection_changed(self, start: int, end: int) -> None:
-        was_playing = self.player.playing
+        was_playing = self._is_tab_playing()
         repeat_was_checked = self.repeat_check.isChecked()
 
         self.set_selected_measure_range(start, end, notify=True)
@@ -2654,18 +3617,18 @@ class TabPlaybackPanel(QWidget):
         start = self.repeat_start_spin.value() - 1
         end = self.repeat_end_spin.value() - 1
         self.set_selected_measure_range(start, end, notify=True)
-        if self.player.playing:
+        if self._is_tab_playing():
             self._set_repeat_checked(True)
             self._restart_playback_for_repeat_mode(True)
 
     def _on_repeat_toggled(self, enabled: bool) -> None:
         if self._syncing_repeat_toggle or self.song is None:
             return
-        if self.player.playing:
+        if self._is_tab_playing():
             self._restart_playback_for_repeat_mode(enabled)
 
     def _play(self) -> None:
-        if self.player.playing:
+        if self._is_tab_playing():
             self._stop()
             return
         if self.song is None or not self.song.track.measures:
@@ -2683,6 +3646,25 @@ class TabPlaybackPanel(QWidget):
     def _start_playback(self, start: int, end: int, *, repeat: bool, play_from: int, play_from_tick: int | None = None) -> None:
         if self.song is None or not self.song.track.measures:
             return
+        self.player.stop(emit=False)
+        self.youtube_player.stop(emit=False)
+        self.tab_metronome.stop()
+        if self._use_youtube_source():
+            if not self.youtube_player.available or not self.youtube_player.video_id:
+                QMessageBox.warning(self, "YouTube unavailable", "YouTube 재생 정보를 사용할 수 없어 MIDI로 재생합니다.")
+                self.midi_radio.setChecked(True)
+            else:
+                self.youtube_player.start(
+                    self.song,
+                    start,
+                    end,
+                    repeat=repeat,
+                    speed_percent=self.speed_slider.value(),
+                    play_from_measure_index=play_from,
+                    play_from_tick=play_from_tick,
+                )
+                self._update_youtube_metronome()
+                return
         if not self.player.is_midi_available and not self._midi_warning_shown:
             QMessageBox.warning(
                 self,
@@ -2704,7 +3686,7 @@ class TabPlaybackPanel(QWidget):
     def _restart_playback_for_repeat_mode(self, repeat: bool) -> None:
         if self.song is None or not self.song.track.measures:
             return
-        tick = int(self.player.current_tick)
+        tick = self._current_playback_tick()
         measures = self.song.track.measures
         if repeat:
             start = self.repeat_start_spin.value() - 1
@@ -2764,14 +3746,24 @@ class TabPlaybackPanel(QWidget):
 
     def _stop(self) -> None:
         self.player.stop()
+        self.youtube_player.stop()
+        self.tab_metronome.stop()
+        self._playback_measure_index = None
         self.score.set_playback_tick(None)
 
     def _on_speed_changed(self, value: int) -> None:
         self.speed_label.setText(f"{value}%")
         self.player.set_speed_percent(value)
+        self.youtube_player.set_speed_percent(value)
+        self._update_youtube_metronome()
 
     def _on_playback_position_changed(self, tick: int) -> None:
         self.score.set_playback_tick(tick)
+        if self.song is not None and self.song.track.measures:
+            measure_index = self._measure_index_for_tick(tick)
+            if measure_index != self._playback_measure_index:
+                self._playback_measure_index = measure_index
+                self.playbackMeasureChanged.emit(measure_index)
         self._scroll_playback_measure_into_view(tick)
 
     def _scroll_playback_measure_into_view(self, tick: int) -> None:
@@ -2794,9 +3786,11 @@ class TabPlaybackPanel(QWidget):
             scroll_bar.setValue(target_bottom - viewport_height)
 
     def _on_playing_changed(self, playing: bool) -> None:
-        self.play_button.setIcon(_player_icon("play", "#2563eb" if playing else "#111827"))
-        self.play_button.setToolTip("정지" if playing else "재생")
-        self.play_button.setStyleSheet("background: #dbeafe;" if playing else "")
+        active = self._is_tab_playing()
+        self.play_button.setIcon(_player_icon("play", "#2563eb" if active else "#111827"))
+        self.play_button.setToolTip("정지" if active else "재생")
+        self.play_button.setStyleSheet("background: #dbeafe;" if active else "")
+        self._update_youtube_metronome()
 
 
 class FretboardWidget(QWidget):
@@ -4435,6 +5429,709 @@ class ChordPositionsWidget(QWidget):
         return ", ".join(missing) if missing else "없음"
 
 
+class ChordFinderWidget(QWidget):
+    def __init__(self) -> None:
+        super().__init__()
+        self.song: SongData | None = None
+        self.selected_positions: list[tuple[int, int]] = []
+        self.root_filter: int | None = None
+        self.type_filter: str | None = None
+        self.matches: tuple[ChordMatch, ...] = ()
+        self.entries: tuple[tuple[ChordMatch, ChordPosition], ...] = ()
+        self.match_count = 0
+        self._position_cache: dict[tuple[int, str, tuple[int, ...], tuple[int, ...], int], tuple[ChordPosition, ...]] = {}
+        self._note_hits: list[tuple[QRect, int, int]] = []
+        self._content_height = 560
+        self.fretboard_scroll = QScrollBar(Qt.Orientation.Horizontal, self)
+        self.fretboard_scroll.valueChanged.connect(lambda _value: self.update())
+        self.fretboard_scroll.setCursor(Qt.CursorShape.ArrowCursor)
+        self.setMinimumWidth(320)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        self._rebuild_layout()
+
+    def sizeHint(self) -> QSize:
+        return QSize(380, max(420, self._content_height))
+
+    def set_song(self, song: SongData | None) -> None:
+        self.song = song
+        self._position_cache = {}
+        string_count = len(self._string_pitches())
+        display_fret_count = self._display_fret_count()
+        self.selected_positions = [
+            (string_index, fret)
+            for string_index, fret in self.selected_positions
+            if 0 <= string_index < string_count and 0 <= fret <= display_fret_count
+        ]
+        self._rebuild_matches()
+        self._rebuild_layout()
+        self.update()
+
+    def set_root_filter(self, root_pc: int | None, clear_selection: bool = False) -> None:
+        self.root_filter = root_pc
+        if clear_selection:
+            self.selected_positions = []
+        self._rebuild_matches()
+        self._rebuild_layout()
+        self.update()
+
+    def set_type_filter(self, type_suffix: str | None, clear_selection: bool = False) -> None:
+        self.type_filter = type_suffix
+        if clear_selection:
+            self.selected_positions = []
+        self._rebuild_matches()
+        self._rebuild_layout()
+        self.update()
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        self._sync_fretboard_scrollbar()
+        self._rebuild_layout()
+
+    def mousePressEvent(self, event) -> None:  # type: ignore[override]
+        position = event.position().toPoint()
+        for rect, string_index, fret in self._note_hits:
+            if rect.contains(position):
+                selected_position = (string_index, fret)
+                if selected_position in self.selected_positions:
+                    self.selected_positions.remove(selected_position)
+                else:
+                    self.selected_positions = [
+                        (selected_string_index, selected_fret)
+                        for selected_string_index, selected_fret in self.selected_positions
+                        if selected_string_index != string_index
+                    ]
+                    self.selected_positions.append(selected_position)
+                self._rebuild_matches()
+                self._rebuild_layout()
+                self.update()
+                return
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event) -> None:  # type: ignore[override]
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(), QColor("#f5f7fb"))
+        self._draw_title(painter)
+        self._draw_fretboard(painter)
+        self._draw_results(painter)
+
+    def _rebuild_matches(self) -> None:
+        note_pcs = self._selected_note_pcs()
+        if note_pcs:
+            matches = find_chords_containing_pitches(
+                note_pcs,
+                root_pc=self.root_filter,
+                chord_type_suffix=self.type_filter,
+            )
+        elif self.root_filter is None or self.type_filter is None:
+            matches = ()
+        else:
+            matches = find_chords_by_filter(
+                root_pc=self.root_filter,
+                chord_type_suffix=self.type_filter,
+            )
+
+        if not matches:
+            self.matches = ()
+            self.entries = ()
+            self.match_count = 0
+            return
+        if note_pcs and not self._selected_fret_span_can_fit():
+            self.matches = ()
+            self.entries = ()
+            self.match_count = 0
+            return
+
+        entries: list[tuple[ChordMatch, ChordPosition]] = []
+        listed_matches: list[ChordMatch] = []
+        positions_per_filter_chord = 20 if not note_pcs and self.root_filter is not None and self.type_filter is not None else 1
+        for match in matches:
+            positions = self._positions_for_match(match)
+            if note_pcs:
+                positions = tuple(position for position in positions if self._position_contains_selected_frets(position))
+            if not positions:
+                continue
+            for position in positions[:positions_per_filter_chord]:
+                entries.append((match, position))
+                listed_matches.append(match)
+                if len(entries) >= MAX_CHORD_FINDER_RESULTS:
+                    break
+            if len(entries) >= MAX_CHORD_FINDER_RESULTS:
+                break
+
+        self.match_count = len(entries)
+        self.entries = tuple(entries)
+        self.matches = tuple(listed_matches)
+
+    def _rebuild_layout(self) -> None:
+        self._sync_fretboard_scrollbar()
+        result_y = self._results_start_y()
+        if not self.entries:
+            self._content_height = max(460, result_y + 112)
+        else:
+            self._content_height = (
+                result_y
+                + 42
+                + len(self.entries) * (self._card_height() + 10)
+                + 18
+            )
+        self.setMinimumHeight(self._content_height)
+        self.updateGeometry()
+
+    def _card_height(self) -> int:
+        return 230
+
+    def _string_pitches(self) -> tuple[int, ...]:
+        if self.song is not None:
+            return self.song.track.string_pitches
+        return DEFAULT_FINDER_STRING_PITCHES_HIGH_TO_LOW
+
+    def _fret_count(self) -> int:
+        if self.song is not None:
+            return self.song.track.fret_count
+        return DEFAULT_FINDER_FRET_COUNT
+
+    def _display_fret_count(self) -> int:
+        return min(MAX_DISPLAY_FRET, max(12, self._fret_count()))
+
+    def _prefer_flats(self) -> bool | None:
+        return self.song.track.prefer_flats if self.song is not None else None
+
+    def _selected_note_pcs(self) -> tuple[int, ...]:
+        pitches = self._string_pitches()
+        seen: set[int] = set()
+        note_pcs: list[int] = []
+        for string_index, fret in self.selected_positions:
+            if string_index < 0 or string_index >= len(pitches):
+                continue
+            pc = (pitches[string_index] + fret) % 12
+            if pc in seen:
+                continue
+            seen.add(pc)
+            note_pcs.append(pc)
+        return tuple(note_pcs)
+
+    def _selected_note_names(self) -> str:
+        return " ".join(self._pitch_name(pc) for pc in self._selected_note_pcs())
+
+    def _board_viewport_rect(self) -> QRect:
+        string_count = max(1, len(self._string_pitches()))
+        board_height = max(104, (string_count - 1) * 24)
+        return QRect(56, 64, max(240, self.width() - 84), board_height)
+
+    def _board_virtual_width(self, viewport_width: int) -> int:
+        return max(viewport_width * 2, 600)
+
+    def _sync_fretboard_scrollbar(self) -> None:
+        viewport = self._board_viewport_rect()
+        virtual_width = self._board_virtual_width(viewport.width())
+        maximum = max(0, virtual_width - viewport.width())
+        self.fretboard_scroll.setGeometry(QRect(viewport.left(), viewport.bottom() + 48, viewport.width(), 16))
+        self.fretboard_scroll.setRange(0, maximum)
+        self.fretboard_scroll.setPageStep(viewport.width())
+        self.fretboard_scroll.setSingleStep(max(16, viewport.width() // 10))
+        self.fretboard_scroll.setVisible(maximum > 0)
+
+    def _board_metrics(self) -> tuple[QRect, QRect, int, float, float]:
+        string_count = max(1, len(self._string_pitches()))
+        viewport = self._board_viewport_rect()
+        virtual_width = self._board_virtual_width(viewport.width())
+        scroll_offset = min(self.fretboard_scroll.value(), max(0, virtual_width - viewport.width()))
+        board = QRect(viewport.left() - scroll_offset, viewport.top(), virtual_width, viewport.height())
+        fret_count = self._display_fret_count()
+        fret_gap = board.width() / max(1, fret_count)
+        string_gap = board.height() / max(1, string_count - 1)
+        return viewport, board, fret_count, fret_gap, string_gap
+
+    def _results_start_y(self) -> int:
+        board = self._board_viewport_rect()
+        return board.bottom() + 82
+
+    def _draw_title(self, painter: QPainter) -> None:
+        selected_notes = self._selected_note_names()
+        title = f"{selected_notes} 포함 코드" if selected_notes else self._filter_title()
+        painter.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
+        painter.setPen(QColor("#253044"))
+        painter.drawText(QRect(14, 10, self.width() - 28, 26), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, title)
+        painter.setFont(QFont("Segoe UI", 8))
+        painter.setPen(QColor("#657083"))
+        painter.drawText(
+            QRect(14, 34, self.width() - 28, 18),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            f"{len(self._string_pitches())}줄 · {self._display_fret_count()}프렛 · 선택 {len(self.selected_positions)}개",
+        )
+
+    def _draw_fretboard(self, painter: QPainter) -> None:
+        self._sync_fretboard_scrollbar()
+        viewport, board, fret_count, fret_gap, string_gap = self._board_metrics()
+        pitches = self._string_pitches()
+        if viewport.width() <= 80 or viewport.height() <= 80 or not pitches:
+            return
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#fbfcff"))
+        painter.drawRoundedRect(viewport.adjusted(-4, -8, 4, 8), 5, 5)
+
+        for string_index, open_midi in enumerate(pitches):
+            y = int(viewport.top() + string_index * string_gap)
+            painter.setFont(QFont("Segoe UI", 8))
+            painter.setPen(QColor("#4b5563"))
+            painter.drawText(
+                QRect(viewport.left() - 50, y - 9, 30, 18),
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                fretboard_string_label(open_midi, string_index, self._prefer_flats()),
+            )
+
+        painter.save()
+        painter.setClipRect(viewport.adjusted(-2, -8, 2, 66))
+
+        for fret in range(fret_count + 1):
+            x = int(board.left() + fret * fret_gap)
+            is_nut = fret == 0
+            painter.setPen(QPen(QColor("#5e6878") if is_nut else QColor("#c3cbd6"), 4 if is_nut else 1))
+            painter.drawLine(x, board.top(), x, board.bottom())
+            if fret > 0:
+                painter.setFont(QFont("Segoe UI", 8))
+                painter.setPen(QColor("#697586"))
+                painter.drawText(
+                    QRect(int(x - fret_gap), board.bottom() + 12, int(fret_gap * 2), 16),
+                    Qt.AlignmentFlag.AlignCenter,
+                    str(fret),
+                )
+
+        painter.setPen(QPen(QColor("#798393"), 1.2))
+        for string_index, _open_midi in enumerate(pitches):
+            y = int(board.top() + string_index * string_gap)
+            painter.drawLine(board.left(), y, board.right(), y)
+            painter.setPen(QPen(QColor("#798393"), 1.2))
+
+        self._draw_inlays(painter, board, fret_count, fret_gap)
+        self._draw_position_dots_below_frets(painter, board, fret_count, fret_gap)
+        self._build_note_hits(board, fret_count, fret_gap, string_gap)
+        self._draw_selected_notes(painter, board, fret_gap, string_gap)
+        painter.restore()
+
+    def _build_note_hits(self, board: QRect, fret_count: int, fret_gap: float, string_gap: float) -> None:
+        self._note_hits = []
+        hit_radius = max(12, min(20, int(fret_gap * 0.55)))
+        for string_index, _open_midi in enumerate(self._string_pitches()):
+            y = int(board.top() + string_index * string_gap)
+            for fret in range(fret_count + 1):
+                x = self._fret_center_x(board, fret_gap, fret)
+                self._note_hits.append((QRect(x - hit_radius, y - hit_radius, hit_radius * 2, hit_radius * 2), string_index, fret))
+
+    def _draw_selected_notes(self, painter: QPainter, board: QRect, fret_gap: float, string_gap: float) -> None:
+        pitches = self._string_pitches()
+        for string_index, fret in self.selected_positions:
+            if string_index >= len(pitches) or fret > self._display_fret_count():
+                continue
+            pc = (pitches[string_index] + fret) % 12
+            x = self._fret_center_x(board, fret_gap, fret)
+            y = int(board.top() + string_index * string_gap)
+            self._draw_selected_note_marker(painter, x, y, self._pitch_name(pc), str(fret))
+
+    def _draw_selected_note_marker(self, painter: QPainter, x: int, y: int, note_text: str, fret_text: str) -> None:
+        radius = 15
+        painter.setPen(QPen(QColor("#0f6f34"), 2))
+        painter.setBrush(QColor("#16a34a"))
+        painter.drawEllipse(QPoint(x, y), radius, radius)
+        circle_rect = QRect(x - radius, y - radius, radius * 2, radius * 2)
+        painter.setPen(QColor("#ffffff"))
+        note_font_size = 7 if len(note_text) >= 2 else 8
+        painter.setFont(QFont("Segoe UI", note_font_size, QFont.Weight.Bold))
+        painter.drawText(circle_rect.adjusted(0, 1, 0, -radius + 2), Qt.AlignmentFlag.AlignCenter, note_text)
+        painter.setFont(QFont("Segoe UI", 6, QFont.Weight.DemiBold))
+        painter.drawText(circle_rect.adjusted(0, radius - 4, 0, -1), Qt.AlignmentFlag.AlignCenter, fret_text)
+
+    def _draw_results(self, painter: QPainter) -> None:
+        y = self._results_start_y()
+        selected_notes = self._selected_note_names()
+        if not selected_notes and (self.root_filter is None or self.type_filter is None):
+            self._draw_message(painter, y, "선택된 음 없음")
+            return
+        if not self.entries:
+            self._draw_message(painter, y, "조건에 맞는 코드가 없습니다.")
+            return
+
+        summary = f"선택음 {selected_notes} · 코드 {self.match_count}개" if selected_notes else f"{self._filter_title()} · 코드 {self.match_count}개"
+        if self.match_count > len(self.entries):
+            summary += f" · 상위 {len(self.entries)}개 표시"
+        painter.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#e8edf5"))
+        header_rect = QRect(10, y, max(260, self.width() - 20), 24)
+        painter.drawRoundedRect(header_rect, 6, 6)
+        painter.setPen(QColor("#253044"))
+        painter.drawText(header_rect.adjusted(10, 0, -10, 0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, summary)
+        y += 36
+
+        card_height = self._card_height()
+        for index, (match, position) in enumerate(self.entries, start=1):
+            rect = QRect(10, y, max(260, self.width() - 20), card_height)
+            self._draw_match_card(painter, rect, index, match, position)
+            y += card_height + 10
+
+    def _draw_message(self, painter: QPainter, y: int, text: str) -> None:
+        rect = QRect(10, y, max(260, self.width() - 20), 72)
+        painter.setPen(QPen(QColor("#d6deea"), 1))
+        painter.setBrush(QColor("#ffffff"))
+        painter.drawRoundedRect(rect, 7, 7)
+        painter.setFont(QFont("Segoe UI", 10))
+        painter.setPen(QColor("#657083"))
+        painter.drawText(rect.adjusted(12, 0, -12, 0), Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, text)
+
+    def _draw_match_card(
+        self,
+        painter: QPainter,
+        rect: QRect,
+        index: int,
+        match: ChordMatch,
+        position: ChordPosition,
+    ) -> None:
+        prefer_flats = self._prefer_flats()
+        chord_name = candidate_display_name(match.candidate, prefer_flats)
+        root = pitch_class_name(match.candidate.root_pc, prefer_flats)
+        notes = " ".join(pitch_class_name(pc, prefer_flats) for pc in match.candidate.pitch_classes)
+        roles = self._selected_roles_text(match)
+        meta = f"Root {root} · 타입 {match.chord_type.display_name}"
+        if roles:
+            meta += f" · 선택음 {roles}"
+
+        painter.setPen(QPen(QColor("#d6deea"), 1))
+        painter.setBrush(QColor("#ffffff"))
+        painter.drawRoundedRect(rect, 7, 7)
+        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
+        painter.setPen(QColor("#253044"))
+        painter.drawText(
+            rect.adjusted(10, 7, -10, -rect.height() + 41),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap,
+            f"{index}. {chord_name}",
+        )
+        painter.setFont(QFont("Segoe UI", 8))
+        painter.setPen(QColor("#526071"))
+        painter.drawText(
+            rect.adjusted(10, 45, -10, -rect.height() + 74),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap,
+            f"{meta} · 구성음 {notes}",
+        )
+
+        range_start, range_end = self._display_fret_range(position)
+        fret_text = " ".join("x" if fret == MUTED else str(fret) for fret in reversed(position.frets_high_to_low))
+        missing = self._missing_text(position)
+        barre = f" · 바레 {position.barre_fret}프렛" if position.barre_fret is not None else ""
+        position_meta = (
+            f"손가락 {position.finger_count}개"
+            f"{' + 뮤트 ' + str(position.muted_finger_count) + '개' if position.muted_finger_count else ''}"
+            f"{barre} · {range_start}-{range_end}프렛 · {fret_text} · 생략음 {missing}"
+        )
+        painter.setPen(QColor("#526071"))
+        painter.drawText(rect.adjusted(10, 64, -10, 0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, position_meta)
+
+        board = rect.adjusted(54, 96, -18, -28)
+        if board.width() <= 120 or board.height() <= 80:
+            return
+        self._draw_match_mini_fretboard(painter, board, match.candidate, position, range_start, range_end)
+
+    def _positions_for_match(self, match: ChordMatch) -> tuple[ChordPosition, ...]:
+        key = (
+            match.candidate.root_pc,
+            match.chord_type.suffix,
+            match.candidate.intervals,
+            self._string_pitches(),
+            self._fret_count(),
+        )
+        if key not in self._position_cache:
+            positions = generate_chord_positions(
+                match.candidate,
+                self._string_pitches(),
+                self._fret_count(),
+                max_positions=MAX_CHORD_POSITIONS * len(CHORD_POSITION_CATEGORIES),
+            )
+            self._position_cache[key] = tuple(
+                position for position in positions if self._barre_open_strings_are_playable(position)
+            )
+        return self._position_cache[key]
+
+    def _position_contains_selected_frets(self, position: ChordPosition) -> bool:
+        for string_index, fret in self.selected_positions:
+            if string_index < 0 or string_index >= len(position.frets_high_to_low):
+                return False
+            if position.frets_high_to_low[string_index] != fret:
+                return False
+        return True
+
+    def _selected_fret_span_can_fit(self) -> bool:
+        fretted = [fret for _string_index, fret in self.selected_positions if fret > 0]
+        if not fretted:
+            return True
+        if 0 in [fret for _string_index, fret in self.selected_positions] and max(fretted) > MAX_FRET_SPAN - 1:
+            return False
+        return max(fretted) - min(fretted) <= MAX_FRET_SPAN - 1
+
+    def _barre_open_strings_are_playable(self, position: ChordPosition) -> bool:
+        if position.barre_fret is None:
+            return True
+        barre_strings = [
+            string_index
+            for string_index, fret in enumerate(position.frets_high_to_low)
+            if fret == position.barre_fret
+        ]
+        if len(barre_strings) < 2:
+            return True
+        thinnest_barred_string = min(barre_strings)
+        return all(
+            fret != 0
+            for string_index, fret in enumerate(position.frets_high_to_low)
+            if string_index < thinnest_barred_string
+        )
+
+    def _match_key(self, match: ChordMatch) -> tuple[int, str, tuple[int, ...]]:
+        return (match.candidate.root_pc, match.chord_type.suffix, match.candidate.intervals)
+
+    def _selected_roles_text(self, match: ChordMatch) -> str:
+        parts = [
+            f"{self._pitch_name(note_pc)}={self._chord_position_degree_label(interval)}"
+            for note_pc, interval in zip(match.selected_note_pcs, match.selected_intervals)
+        ]
+        return ", ".join(parts)
+
+    def _filter_title(self) -> str:
+        root = "전체"
+        if self.root_filter is not None:
+            root = pitch_class_name(self.root_filter, self._prefer_flats())
+        chord_type = "전체"
+        if self.type_filter is not None:
+            for item in CHORD_FINDER_TYPES:
+                if item.suffix == self.type_filter:
+                    chord_type = item.display_name
+                    break
+        if self.root_filter is None and self.type_filter is None:
+            return "코드 찾기"
+        return f"{root} {chord_type}".strip()
+
+    def _pitch_name(self, pitch_class: int) -> str:
+        return pitch_class_name(pitch_class, self._prefer_flats())
+
+    def _fret_center_x(self, board: QRect, fret_gap: float, fret: int) -> int:
+        if fret == 0:
+            return int(board.left())
+        return int(board.left() + (fret - 0.5) * fret_gap)
+
+    def _draw_match_mini_fretboard(
+        self,
+        painter: QPainter,
+        board: QRect,
+        candidate: Candidate,
+        position: ChordPosition,
+        range_start: int,
+        range_end: int,
+    ) -> None:
+        string_pitches = self._string_pitches()
+        string_count = len(string_pitches)
+        string_gap = board.height() / max(1, string_count - 1)
+        fret_gap = board.width() / MAX_FRET_SPAN
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#fbfcff"))
+        painter.drawRoundedRect(board.adjusted(-4, -8, 4, 8), 5, 5)
+
+        self._draw_match_mini_barre(painter, board, fret_gap, string_gap, position, range_start, range_end)
+
+        for fret_offset in range(MAX_FRET_SPAN + 1):
+            x = int(board.left() + fret_offset * fret_gap)
+            is_nut = range_start == 0 and fret_offset == 0
+            painter.setPen(QPen(QColor("#5e6878") if is_nut else QColor("#c3cbd6"), 4 if is_nut else 1))
+            painter.drawLine(x, board.top(), x, board.bottom())
+
+        painter.setFont(QFont("Segoe UI", 8))
+        for fret in range(range_start, range_end + 1):
+            x = int(board.left() + (fret - range_start + 0.5) * fret_gap)
+            painter.setPen(QColor("#697586"))
+            painter.drawText(QRect(int(x - fret_gap / 2), board.bottom() + 12, int(fret_gap), 16), Qt.AlignmentFlag.AlignCenter, str(fret))
+
+        painter.setPen(QPen(QColor("#798393"), 1.2))
+        for string_index, open_midi in enumerate(string_pitches):
+            y = int(board.top() + string_index * string_gap)
+            painter.drawLine(board.left(), y, board.right(), y)
+            painter.setFont(QFont("Segoe UI", 8))
+            painter.setPen(QColor("#4b5563"))
+            painter.drawText(
+                QRect(board.left() - 48, y - 9, 28, 18),
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                fretboard_string_label(open_midi, string_index, self._prefer_flats()),
+            )
+            self._draw_match_open_or_mute(painter, board.left() - 13, y, candidate, position, string_index, range_start)
+            painter.setPen(QPen(QColor("#798393"), 1.2))
+
+        self._draw_match_position_notes(painter, board, fret_gap, string_gap, candidate, position, range_start, range_end)
+
+    def _draw_match_open_or_mute(
+        self,
+        painter: QPainter,
+        x: int,
+        y: int,
+        candidate: Candidate,
+        position: ChordPosition,
+        string_index: int,
+        range_start: int,
+    ) -> None:
+        fret = position.frets_high_to_low[string_index]
+        if fret == MUTED:
+            painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+            painter.setPen(QColor("#9b1c1c"))
+            painter.drawText(QRect(x - 7, y - 10, 14, 20), Qt.AlignmentFlag.AlignCenter, "x")
+        elif fret == 0 and range_start != 0:
+            interval = (self._string_pitches()[string_index] - candidate.root_pc) % 12
+            self._draw_chord_position_marker(
+                painter,
+                x,
+                y,
+                "0",
+                self._chord_position_degree_label(interval),
+                False,
+                13,
+                is_root=interval == 0,
+            )
+
+    def _draw_match_mini_barre(
+        self,
+        painter: QPainter,
+        board: QRect,
+        fret_gap: float,
+        string_gap: float,
+        position: ChordPosition,
+        range_start: int,
+        range_end: int,
+    ) -> None:
+        if position.barre_fret is None or not (range_start <= position.barre_fret <= range_end):
+            return
+        strings = [index for index, fret in enumerate(position.frets_high_to_low) if fret == position.barre_fret]
+        if len(strings) < 2:
+            return
+        x = int(board.left() + (position.barre_fret - range_start + 0.5) * fret_gap)
+        top = int(board.top() + min(strings) * string_gap) - 15
+        bottom = int(board.top() + max(strings) * string_gap) + 15
+        painter.setPen(QPen(QColor("#b45309"), 1.2))
+        painter.setBrush(QColor(250, 204, 21, 150))
+        painter.drawRoundedRect(QRect(x - 15, top, 30, bottom - top), 13, 13)
+
+    def _draw_match_position_notes(
+        self,
+        painter: QPainter,
+        board: QRect,
+        fret_gap: float,
+        string_gap: float,
+        candidate: Candidate,
+        position: ChordPosition,
+        range_start: int,
+        range_end: int,
+    ) -> None:
+        fret_font = QFont("Segoe UI", 8, QFont.Weight.Bold)
+        degree_font = QFont("Segoe UI", 6, QFont.Weight.DemiBold)
+        for string_index, fret in enumerate(position.frets_high_to_low):
+            if fret < 0 or not (range_start <= fret <= range_end):
+                continue
+            if fret == 0:
+                x = int(board.left())
+            else:
+                x = int(board.left() + (fret - range_start + 0.5) * fret_gap)
+            y = int(board.top() + string_index * string_gap)
+            is_barre = position.barre_fret == fret
+            interval = (self._string_pitches()[string_index] + fret - candidate.root_pc) % 12
+            degree = self._chord_position_degree_label(interval)
+            self._draw_chord_position_marker(
+                painter,
+                x,
+                y,
+                str(fret),
+                degree,
+                is_barre,
+                15,
+                fret_font,
+                degree_font,
+                is_root=interval == 0,
+            )
+
+    def _draw_chord_position_marker(
+        self,
+        painter: QPainter,
+        x: int,
+        y: int,
+        fret_text: str,
+        degree: str,
+        is_barre: bool,
+        radius: int,
+        fret_font: QFont | None = None,
+        degree_font: QFont | None = None,
+        is_root: bool = False,
+    ) -> None:
+        if is_root:
+            fill = QColor("#dc2626")
+            border = QColor("#991b1b")
+        elif is_barre:
+            fill = QColor("#fde68a")
+            border = QColor("#b45309")
+        else:
+            fill = QColor("#16a34a")
+            border = QColor("#0f6f34")
+        painter.setPen(QPen(border, 2))
+        painter.setBrush(fill)
+        painter.drawEllipse(QPoint(x, y), radius, radius)
+
+        text_color = QColor("#111827") if is_barre and not is_root else QColor("#ffffff")
+        painter.setPen(text_color)
+        circle_rect = QRect(x - radius, y - radius, radius * 2, radius * 2)
+        painter.setFont(fret_font or QFont("Segoe UI", 7, QFont.Weight.Bold))
+        painter.drawText(circle_rect.adjusted(0, 1, 0, -radius + 2), Qt.AlignmentFlag.AlignCenter, fret_text)
+        painter.setFont(degree_font or QFont("Segoe UI", 5, QFont.Weight.DemiBold))
+        painter.drawText(circle_rect.adjusted(0, radius - 4, 0, -1), Qt.AlignmentFlag.AlignCenter, degree)
+
+    def _chord_position_degree_label(self, interval: int) -> str:
+        return "R" if interval % 12 == 0 else CHORD_DEGREE_LABELS[interval % 12]
+
+    def _display_fret_range(self, position: ChordPosition) -> tuple[int, int]:
+        if position.fretted_count == 0:
+            return 0, MAX_FRET_SPAN - 1
+        if position.open_count and position.max_fret <= MAX_FRET_SPAN - 1:
+            return 0, MAX_FRET_SPAN - 1
+        start = max(1, position.min_fret)
+        return start, start + MAX_FRET_SPAN - 1
+
+    def _missing_text(self, position: ChordPosition) -> str:
+        missing = [self._chord_position_degree_label(interval) for interval in position.missing_intervals]
+        return ", ".join(missing) if missing else "없음"
+
+    def _draw_position_dots_below_frets(self, painter: QPainter, board: QRect, fret_count: int, fret_gap: float) -> None:
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#111827"))
+        y = board.bottom() + 34
+        for fret in (3, 5, 7, 9, 15):
+            if fret > fret_count:
+                continue
+            x = self._fret_center_x(board, fret_gap, fret)
+            painter.drawEllipse(QPoint(x, y), 4, 4)
+        if fret_count >= 12:
+            x = self._fret_center_x(board, fret_gap, 12)
+            painter.drawEllipse(QPoint(x - 6, y), 4, 4)
+            painter.drawEllipse(QPoint(x + 6, y), 4, 4)
+
+    def _draw_inlays(self, painter: QPainter, board: QRect, fret_count: int, fret_gap: float) -> None:
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#e3e8ef"))
+        center_y = board.center().y()
+        for fret in (3, 5, 7, 9, 15):
+            if fret > fret_count:
+                continue
+            x = int(board.left() + (fret - 0.5) * fret_gap)
+            painter.drawEllipse(QPoint(x, center_y), 5, 5)
+        if fret_count >= 12:
+            x = int(board.left() + 11.5 * fret_gap)
+            painter.drawEllipse(QPoint(x, center_y - 18), 5, 5)
+            painter.drawEllipse(QPoint(x, center_y + 18), 5, 5)
+
+
 class TabAnalyzerWindow(QMainWindow):
     def __init__(self, initial_file: str | Path | None = None) -> None:
         super().__init__()
@@ -4467,6 +6164,11 @@ class TabAnalyzerWindow(QMainWindow):
         self.chord_positions_panel = QWidget()
         self.root_string_combo = QComboBox()
         self.category_combo = QComboBox()
+        self.chord_finder_widget = ChordFinderWidget()
+        self.chord_finder_scroll = QScrollArea()
+        self.chord_finder_panel = QWidget()
+        self.chord_finder_root_combo = QComboBox()
+        self.chord_finder_type_combo = QComboBox()
         self.right_tabs = QTabWidget()
         self.tuning_presets = load_tuning_presets()
         self.track_combo = QComboBox()
@@ -4496,11 +6198,13 @@ class TabAnalyzerWindow(QMainWindow):
         self._songsterr_thread: QThread | None = None
         self._songsterr_worker: _SongsterrWorker | None = None
         self._songsterr_progress_dialog: AnalysisProgressDialog | None = None
+        self.recent_files_menu: QMenu | None = None
 
         self._build_ui()
         self.tab_canvas.selectionChanged.connect(self._on_selection_changed)
         self.tab_canvas.memoClicked.connect(self._open_memo_for_measure)
         self.tab_playback_panel.selectionChanged.connect(self._on_tab_block_selection_changed)
+        self.tab_playback_panel.playbackMeasureChanged.connect(self._on_tab_playback_measure_changed)
         self.tab_canvas.zoomWheelRequested.connect(self._adjust_zoom_by_delta)
         self.tab_playback_panel.zoomWheelRequested.connect(self._adjust_zoom_by_delta)
         self.analysis_scroll.viewport().installEventFilter(self)
@@ -4516,6 +6220,7 @@ class TabAnalyzerWindow(QMainWindow):
         self._update_song_panel()
         self._update_chord_position_panel(None, None)
         self.right_tabs.setCurrentIndex(0)
+        apply_translations(self)
 
         if initial_file:
             self.load_file(initial_file)
@@ -4542,6 +6247,9 @@ class TabAnalyzerWindow(QMainWindow):
         open_action.triggered.connect(self._open_file_dialog)
         file_menu.addAction(open_action)
         toolbar.addAction(open_action)
+        self.recent_files_menu = file_menu.addMenu("최근 연 파일")
+        self._refresh_recent_files_menu()
+        file_menu.addSeparator()
         songsterr_action = QAction("Songsterr에서 타브검색", self)
         songsterr_action.triggered.connect(self._search_songsterr)
         file_menu.addAction(songsterr_action)
@@ -4673,8 +6381,31 @@ class TabAnalyzerWindow(QMainWindow):
         chord_panel_layout.setSpacing(0)
         chord_panel_layout.addLayout(chord_filter_layout)
         chord_panel_layout.addWidget(self.chord_positions_scroll)
+
+        self.chord_finder_scroll.setWidgetResizable(True)
+        self.chord_finder_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.chord_finder_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.chord_finder_scroll.setWidget(self.chord_finder_widget)
+        self.chord_finder_root_combo.currentIndexChanged.connect(self._on_chord_finder_root_filter_changed)
+        self.chord_finder_type_combo.currentIndexChanged.connect(self._on_chord_finder_type_filter_changed)
+        self._populate_chord_finder_controls()
+        chord_finder_filter_layout = QHBoxLayout()
+        chord_finder_filter_layout.setContentsMargins(8, 8, 8, 4)
+        chord_finder_filter_layout.addWidget(QLabel("Root음"))
+        self.chord_finder_root_combo.setMinimumWidth(105)
+        chord_finder_filter_layout.addWidget(self.chord_finder_root_combo, 1)
+        chord_finder_filter_layout.addWidget(QLabel("타입"))
+        self.chord_finder_type_combo.setMinimumWidth(120)
+        chord_finder_filter_layout.addWidget(self.chord_finder_type_combo, 1)
+        chord_finder_panel_layout = QVBoxLayout(self.chord_finder_panel)
+        chord_finder_panel_layout.setContentsMargins(0, 0, 0, 0)
+        chord_finder_panel_layout.setSpacing(0)
+        chord_finder_panel_layout.addLayout(chord_finder_filter_layout)
+        chord_finder_panel_layout.addWidget(self.chord_finder_scroll)
+
         self.right_tabs.addTab(self.song_browser, "곡 분석")
         self.right_tabs.addTab(self.chord_positions_panel, "코드 포지션")
+        self.right_tabs.addTab(self.chord_finder_panel, "코드 찾기")
         self.right_tabs.addTab(self.tab_playback_panel.recording_tab, "녹음")
         self.right_tabs.setMinimumWidth(330)
         self.right_tabs.setMaximumWidth(560)
@@ -4691,6 +6422,38 @@ class TabAnalyzerWindow(QMainWindow):
             return
         self.current_file = Path(path)
         self._start_load_worker(self.current_file, None, include_tracks=True)
+
+    def _refresh_recent_files_menu(self) -> None:
+        if self.recent_files_menu is None:
+            return
+        self.recent_files_menu.clear()
+        recent_files = load_recent_files()
+        if not recent_files:
+            empty_action = QAction(tr("최근 파일 없음"), self)
+            empty_action.setEnabled(False)
+            self.recent_files_menu.addAction(empty_action)
+            return
+        for file_path in recent_files:
+            action = QAction(str(file_path), self)
+            action.setToolTip(str(file_path))
+            action.triggered.connect(lambda _checked=False, path=file_path: self._open_recent_file(path))
+            self.recent_files_menu.addAction(action)
+
+    def _add_recent_file(self, path: str | Path) -> None:
+        add_recent_file(path)
+        self._refresh_recent_files_menu()
+
+    def _remove_recent_file(self, path: str | Path) -> None:
+        remove_recent_file(path)
+        self._refresh_recent_files_menu()
+
+    def _open_recent_file(self, path: str | Path) -> None:
+        file_path = Path(path)
+        if not file_path.exists():
+            self._remove_recent_file(file_path)
+            QMessageBox.warning(self, "최근 연 파일", f"파일을 찾을 수 없어 최근 목록에서 제거했습니다.\n\n{file_path}")
+            return
+        self.load_file(file_path)
 
     def _load_selected_track(self) -> None:
         if self.current_file is None:
@@ -4751,6 +6514,8 @@ class TabAnalyzerWindow(QMainWindow):
         if mode == "file" and tracks is not None:
             self._populate_track_combo(tracks, int(selected_track))
         self._finish_loaded_song(song)
+        if mode == "file":
+            self._add_recent_file(path)
 
     def _on_load_failed(self, message: str) -> None:
         self._close_load_progress()
@@ -5456,6 +7221,14 @@ class TabAnalyzerWindow(QMainWindow):
         category = self.category_combo.currentData()
         self.chord_positions_widget.set_category_filter(str(category) if category is not None else None)
 
+    def _on_chord_finder_root_filter_changed(self, _index: int | None = None) -> None:
+        root_pc = self.chord_finder_root_combo.currentData()
+        self.chord_finder_widget.set_root_filter(int(root_pc) if root_pc is not None else None, clear_selection=True)
+
+    def _on_chord_finder_type_filter_changed(self, _index: int | None = None) -> None:
+        type_suffix = self.chord_finder_type_combo.currentData()
+        self.chord_finder_widget.set_type_filter(str(type_suffix) if type_suffix is not None else None, clear_selection=True)
+
     def _apply_selected_tuning(self) -> None:
         if self.source_song is None:
             return
@@ -5474,6 +7247,7 @@ class TabAnalyzerWindow(QMainWindow):
         self.fretboard.set_song(song)
         self.scale_position_widget.set_song(song)
         self.song_scale_usage_widget.set_song(song)
+        self.chord_finder_widget.set_song(song)
         self._populate_root_string_combo(len(song.track.string_pitches))
 
     def _selected_tuning_preset(self) -> TuningPreset | None:
@@ -5518,6 +7292,33 @@ class TabAnalyzerWindow(QMainWindow):
         self.category_combo.blockSignals(False)
         selected = self.category_combo.currentData()
         self.chord_positions_widget.set_category_filter(str(selected) if selected is not None else None)
+
+    def _populate_chord_finder_controls(self) -> None:
+        current_root = self.chord_finder_root_combo.currentData()
+        current_type = self.chord_finder_type_combo.currentData()
+
+        self.chord_finder_root_combo.blockSignals(True)
+        self.chord_finder_root_combo.clear()
+        self.chord_finder_root_combo.addItem("전체", None)
+        for root_pc, label in SCALE_POSITION_ROOT_OPTIONS:
+            self.chord_finder_root_combo.addItem(label, root_pc)
+        root_index = self.chord_finder_root_combo.findData(current_root)
+        self.chord_finder_root_combo.setCurrentIndex(root_index if root_index >= 0 else 0)
+        self.chord_finder_root_combo.blockSignals(False)
+
+        self.chord_finder_type_combo.blockSignals(True)
+        self.chord_finder_type_combo.clear()
+        self.chord_finder_type_combo.addItem("전체", None)
+        for chord_type in CHORD_FINDER_TYPES:
+            self.chord_finder_type_combo.addItem(chord_type.display_name, chord_type.suffix)
+        type_index = self.chord_finder_type_combo.findData(current_type)
+        self.chord_finder_type_combo.setCurrentIndex(type_index if type_index >= 0 else 0)
+        self.chord_finder_type_combo.blockSignals(False)
+
+        selected_root = self.chord_finder_root_combo.currentData()
+        selected_type = self.chord_finder_type_combo.currentData()
+        self.chord_finder_widget.set_root_filter(int(selected_root) if selected_root is not None else None)
+        self.chord_finder_widget.set_type_filter(str(selected_type) if selected_type is not None else None)
 
     def _populate_scale_position_controls(self) -> None:
         current_root = self.scale_root_combo.currentData()
@@ -5600,13 +7401,22 @@ class TabAnalyzerWindow(QMainWindow):
             QTimer.singleShot(0, lambda item=start: self._scroll_analysis_measure_into_view(item))
         self.fretboard.set_selection(first_measure, candidate, "scale", None)
         self.theory_browser.setHtml(self.theory_explainer.explain_tab_selection(self.song, start, end))
-        theory_index = self.measure_tabs.indexOf(self.theory_browser)
-        if theory_index >= 0:
-            self.measure_tabs.setCurrentIndex(theory_index)
+        fretboard_index = self.measure_tabs.indexOf(self.fretboard)
+        if fretboard_index >= 0:
+            self.measure_tabs.setCurrentIndex(fretboard_index)
         if start == end:
             self.statusBar().showMessage(f"M{first_measure.number}: 타브 블럭 선택")
         else:
             self.statusBar().showMessage(f"M{first_measure.number}-M{measures[end].number}: 타브 블럭 선택")
+
+    def _on_tab_playback_measure_changed(self, measure_index: int) -> None:
+        if self.song is None or not self.song.track.measures:
+            return
+        measures = self.song.track.measures
+        measure_index = max(0, min(measure_index, len(measures) - 1))
+        measure = measures[measure_index]
+        candidate = measure.analysis.scale_candidates[0] if measure.analysis.scale_candidates else None
+        self.fretboard.set_selection(measure, candidate, "scale", None)
 
     def _measure_index(self, measure: MeasureData) -> int | None:
         if self.song is None:
@@ -5656,6 +7466,7 @@ class TabAnalyzerWindow(QMainWindow):
 
 
 def run_app(initial_file: str | Path | None = None) -> int:
+    _allow_qt_webengine_autoplay()
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication(sys.argv if sys.argv else ["TabAnalyzer"])
     if APP_ICON_PATH.exists():

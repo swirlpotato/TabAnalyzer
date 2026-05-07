@@ -52,6 +52,11 @@ class SongsterrAuthError(SongsterrError):
     """Raised when Songsterr requires a logged-in/authorized session."""
 
 
+def details_path_for_gp(path: str | Path) -> Path:
+    gp_path = Path(path)
+    return gp_path.with_name(f"{gp_path.stem}_details.json")
+
+
 def load_cookie_header(path: str | Path = COOKIE_STORE_PATH) -> str | None:
     cookie_path = Path(path)
     if not cookie_path.exists():
@@ -133,7 +138,88 @@ def download_guitar_pro(
 
     file_path = _unique_path(output_path / _export_filename(meta))
     file_path.write_bytes(exported)
+    _write_details_file(file_path, result, meta)
     return file_path
+
+
+def load_details_file(path: str | Path) -> dict:
+    details_path = details_path_for_gp(path)
+    if not details_path.exists():
+        return {}
+    try:
+        data = json.loads(details_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_details_file(file_path: Path, result: SongsterrResult, meta: dict) -> Path:
+    details = _songsterr_details(result, meta)
+    details_path = details_path_for_gp(file_path)
+    details_path.write_text(json.dumps(details, ensure_ascii=False, indent=2), encoding="utf-8")
+    return details_path
+
+
+def _songsterr_details(result: SongsterrResult, meta: dict) -> dict:
+    videos = _youtube_videos(meta)
+    default_video = _default_youtube_video(videos)
+    youtube: dict[str, object] = {
+        "videos": videos,
+        "sync": {
+            "offset_seconds": 0.0,
+        },
+    }
+    if default_video is not None:
+        youtube["default_video_id"] = default_video["video_id"]
+        youtube["default_video_url"] = default_video["url"]
+    return {
+        "source": "songsterr",
+        "songsterr": {
+            "song_id": _as_int(meta.get("songId")) or result.song_id,
+            "revision_id": _as_int(meta.get("revisionId")),
+            "artist": str(meta.get("artist") or result.artist),
+            "title": str(meta.get("title") or result.title),
+            "url": result.url,
+            "default_track": _as_int(meta.get("defaultTrack")) if meta.get("defaultTrack") is not None else result.default_track,
+            "popular_track": _as_int(meta.get("popularTrack")) if meta.get("popularTrack") is not None else result.popular_track,
+        },
+        "youtube": youtube,
+    }
+
+
+def _youtube_videos(meta: dict) -> list[dict]:
+    raw_videos = meta.get("videos")
+    if not isinstance(raw_videos, list):
+        return []
+    videos: list[dict] = []
+    for raw in raw_videos:
+        if not isinstance(raw, dict):
+            continue
+        video_id = str(raw.get("videoId") or "").strip()
+        if not video_id:
+            continue
+        videos.append(
+            {
+                "id": _as_int(raw.get("id")),
+                "video_id": video_id,
+                "url": f"https://www.youtube.com/watch?v={video_id}",
+                "status": str(raw.get("status") or ""),
+                "feature": raw.get("feature"),
+            }
+        )
+    return videos
+
+
+def _default_youtube_video(videos: list[dict]) -> dict | None:
+    if not videos:
+        return None
+    for video in videos:
+        if video.get("status") == "done" and video.get("feature") is None:
+            return video
+    for video in videos:
+        if video.get("status") == "done":
+            return video
+    return videos[0]
 
 
 def _extract_state(html: str) -> dict:

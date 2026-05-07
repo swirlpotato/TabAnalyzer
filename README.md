@@ -2,7 +2,7 @@
 
 PyQt6 desktop app for reading Guitar Pro files and estimating scale/chord candidates per measure.
 
-Current version: `0.1`.
+Current version: `0.2`.
 
 ## Run
 

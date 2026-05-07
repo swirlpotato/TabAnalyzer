@@ -3,10 +3,14 @@ from pathlib import Path
 import unittest
 
 from tab_analyzer.songsterr import (
+    _default_youtube_video,
     _extract_song_links,
     _extract_state,
     _export_filename,
     _part_url,
+    _songsterr_details,
+    _youtube_videos,
+    details_path_for_gp,
     load_cookie_header,
     save_cookie_header,
 )
@@ -63,6 +67,51 @@ class SongsterrParsingTests(unittest.TestCase):
             save_cookie_header("session=abc; other=123", path)
 
             self.assertEqual(load_cookie_header(path), "session=abc; other=123")
+
+    def test_details_path_uses_gp_filename_stem(self):
+        self.assertEqual(details_path_for_gp(Path("Queen-Bohemian.gp")).name, "Queen-Bohemian_details.json")
+
+    def test_songsterr_details_include_youtube_videos(self):
+        meta = {
+            "songId": 270,
+            "revisionId": 6534342,
+            "artist": "Queen",
+            "title": "Bohemian Rhapsody",
+            "videos": [
+                {"id": 1, "status": "done", "feature": "backing", "videoId": "backing123"},
+                {"id": 2, "status": "done", "feature": None, "videoId": "main456"},
+            ],
+        }
+        result = type(
+            "Result",
+            (),
+            {
+                "song_id": 270,
+                "artist": "Queen",
+                "title": "Bohemian Rhapsody",
+                "url": "https://www.songsterr.com/a/wsa/queen-bohemian-rhapsody-tab-s270",
+                "default_track": 0,
+                "popular_track": 0,
+            },
+        )()
+
+        details = _songsterr_details(result, meta)
+
+        self.assertEqual(details["youtube"]["default_video_id"], "main456")
+        self.assertEqual(details["youtube"]["videos"][0]["url"], "https://www.youtube.com/watch?v=backing123")
+        self.assertEqual(details["youtube"]["sync"]["offset_seconds"], 0.0)
+
+    def test_youtube_video_parser_prefers_main_done_video(self):
+        videos = _youtube_videos(
+            {
+                "videos": [
+                    {"status": "done", "feature": "alternative", "videoId": "alt"},
+                    {"status": "done", "feature": None, "videoId": "main"},
+                ]
+            }
+        )
+
+        self.assertEqual(_default_youtube_video(videos)["video_id"], "main")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,430 @@
+import os
+import unittest
+from dataclasses import replace
+from unittest.mock import patch
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont, QFontMetrics, QImage, QPainter, QShortcut
+from PyQt6.QtWidgets import QApplication
+
+from tab_analyzer.ui import TabPlaybackPanel, TabScoreWidget
+from tab_analyzer.ui import YOUTUBE_VIEW_HEIGHT, YOUTUBE_VIEW_PIP_MARGIN, YOUTUBE_VIEW_WIDTH
+from tests.helpers import beat, measure, song_with_measures, tab_note
+
+
+class FakeMetronome:
+    def __init__(self) -> None:
+        self.bpm = None
+        self.beats_per_bar = None
+        self.ticking = False
+        self.started = 0
+        self.stopped = 0
+        self.closed = 0
+
+    def set_bpm(self, bpm: int) -> None:
+        self.bpm = bpm
+
+    def set_beats_per_bar(self, beats: int) -> None:
+        self.beats_per_bar = beats
+
+    def start(self) -> None:
+        self.ticking = True
+        self.started += 1
+
+    def stop(self) -> None:
+        self.ticking = False
+        self.stopped += 1
+
+    def close(self) -> None:
+        self.closed += 1
+
+
+class FakeWebPage:
+    def runJavaScript(self, _script: str) -> None:
+        return
+
+
+class FakePipView:
+    def __init__(self) -> None:
+        self.geometry = None
+        self.raised = False
+        self.visible = None
+        self._page = FakeWebPage()
+
+    def setGeometry(self, x: int, y: int, width: int, height: int) -> None:
+        self.geometry = (x, y, width, height)
+
+    def raise_(self) -> None:
+        self.raised = True
+
+    def setVisible(self, visible: bool) -> None:
+        self.visible = visible
+
+    def page(self) -> FakeWebPage:
+        return self._page
+
+
+class TabScoreLayoutTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_sequential_notes_keep_spacing_across_strings(self):
+        measure_data = measure(
+            14,
+            (
+                beat(0, (tab_note(4, 11, 0), tab_note(5, 9, 0))),
+                beat(960, (tab_note(1, 13, 960),)),
+                beat(1200, (tab_note(1, 14, 1200),)),
+                beat(1440, (tab_note(1, 13, 1440),)),
+                beat(1680, (tab_note(2, 15, 1680),)),
+                beat(1920, (tab_note(2, 14, 1920),)),
+            ),
+        )
+        widget = TabScoreWidget()
+        positions = widget._note_positions(measure_data, 54, 475, 100, 13)
+
+        by_start = {
+            (beat_data.start_in_measure, note.string, note.fret): x
+            for x, _y, note, beat_data in positions
+        }
+
+        self.assertGreaterEqual(
+            by_start[(1680, 2, 15)] - by_start[(1440, 1, 13)],
+            24,
+        )
+
+    def test_chord_notes_stay_aligned(self):
+        measure_data = measure(
+            1,
+            (
+                beat(0, (tab_note(4, 11, 0), tab_note(5, 9, 0))),
+                beat(960, (tab_note(1, 13, 960),)),
+            ),
+        )
+        widget = TabScoreWidget()
+        positions = widget._note_positions(measure_data, 54, 475, 100, 13)
+        chord_x = {
+            note.string: x
+            for x, _y, note, beat_data in positions
+            if beat_data.start_in_measure == 0
+        }
+
+        self.assertEqual(chord_x[4], chord_x[5])
+
+    def test_rhythm_notation_counts_beams_from_duration(self):
+        widget = TabScoreWidget()
+
+        self.assertEqual(widget._rhythm_beam_count(960), 0)
+        self.assertEqual(widget._rhythm_beam_count(480), 1)
+        self.assertEqual(widget._rhythm_beam_count(240), 2)
+        self.assertEqual(widget._rhythm_beam_count(120), 3)
+
+    def test_triplet_duration_gets_tuplet_label(self):
+        widget = TabScoreWidget()
+
+        self.assertEqual(widget._tuplet_label_for_duration(320), "3")
+        self.assertEqual(widget._tuplet_label_for_duration(160), "3")
+        self.assertIsNone(widget._tuplet_label_for_duration(240))
+
+    def test_tuplet_groups_include_start_and_end_positions(self):
+        widget = TabScoreWidget()
+        beats = [
+            replace(beat(0, (tab_note(1, 12, 0),)), duration_ticks=320),
+            replace(beat(320, (tab_note(1, 14, 320),)), duration_ticks=320),
+            replace(beat(640, (tab_note(1, 15, 640),)), duration_ticks=320),
+            beat(960, (tab_note(2, 15, 960),)),
+        ]
+
+        groups = widget._tuplet_groups([(100, beats[0]), (140, beats[1]), (180, beats[2]), (240, beats[3])])
+
+        self.assertEqual(groups, [("3", 100, 180)])
+
+    def test_tuplet_groups_omit_connected_adjacent_triplets(self):
+        widget = TabScoreWidget()
+        beats = [
+            replace(beat(index * 320, (tab_note(1, 12 + index, index * 320),)), duration_ticks=320)
+            for index in range(6)
+        ]
+
+        groups = widget._tuplet_groups([(100 + (index * 40), beat_data) for index, beat_data in enumerate(beats)])
+
+        self.assertEqual(groups, [])
+
+    def test_tuplet_groups_keep_single_sextuplet_group(self):
+        widget = TabScoreWidget()
+        beats = [
+            replace(beat(index * 80, (tab_note(1, 12 + index, index * 80),)), duration_ticks=80, tuplet=(6, 4))
+            for index in range(6)
+        ]
+
+        groups = widget._tuplet_groups([(100 + (index * 20), beat_data) for index, beat_data in enumerate(beats)])
+
+        self.assertEqual(groups, [("6", 100, 200)])
+
+    def test_tuplet_groups_omit_connected_sextuplet_run_from_songsterr_fixture(self):
+        widget = TabScoreWidget()
+        beats = [
+            replace(beat(index * 80, (tab_note(1, 12 + index, index * 80),)), duration_ticks=80, tuplet=(6, 4))
+            for index in range(12)
+        ]
+
+        groups = widget._tuplet_groups([(100 + (index * 20), beat_data) for index, beat_data in enumerate(beats)])
+
+        self.assertEqual(groups, [])
+
+    def test_tab_playback_panel_installs_space_toggle_shortcut(self):
+        panel = TabPlaybackPanel()
+        try:
+            shortcuts = {shortcut.key().toString(): shortcut.context() for shortcut in panel.findChildren(QShortcut)}
+
+            self.assertEqual(shortcuts.get("Space"), Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        finally:
+            panel.shutdown()
+
+    def test_tab_playback_panel_has_no_separate_stop_button(self):
+        panel = TabPlaybackPanel()
+        try:
+            self.assertFalse(hasattr(panel, "stop_button"))
+        finally:
+            panel.shutdown()
+
+    def test_tab_playback_panel_shows_youtube_before_midi(self):
+        panel = TabPlaybackPanel()
+        try:
+            controls = panel.layout().itemAt(0).layout()
+
+            self.assertIs(controls.itemAt(1).widget(), panel.youtube_radio)
+            self.assertIs(controls.itemAt(2).widget(), panel.midi_radio)
+        finally:
+            panel.shutdown()
+
+    def test_youtube_view_is_positioned_as_score_pip(self):
+        panel = TabPlaybackPanel()
+        original_view = panel.youtube_player.view
+        fake_view = FakePipView()
+        try:
+            if original_view is not None:
+                original_view.hide()
+            panel.youtube_player.view = fake_view
+            panel.resize(900, 620)
+            panel.show()
+            self.app.processEvents()
+
+            panel._position_youtube_view()
+
+            viewport = panel.score_scroll.viewport()
+            top_left = viewport.mapTo(panel, viewport.rect().topLeft())
+            expected_x = top_left.x() + max(0, viewport.width() - YOUTUBE_VIEW_WIDTH - YOUTUBE_VIEW_PIP_MARGIN)
+            expected_y = top_left.y() + max(0, viewport.height() - YOUTUBE_VIEW_HEIGHT - YOUTUBE_VIEW_PIP_MARGIN)
+            self.assertEqual(fake_view.geometry, (expected_x, expected_y, YOUTUBE_VIEW_WIDTH, YOUTUBE_VIEW_HEIGHT))
+            self.assertTrue(fake_view.raised)
+        finally:
+            panel.youtube_player.view = original_view
+            panel.close()
+            panel.shutdown()
+
+    def test_tab_playback_defaults_to_youtube_when_available(self):
+        panel = TabPlaybackPanel()
+        try:
+            panel.youtube_player.available = True
+            panel.youtube_player._load_video = lambda _video_id: None
+            song = song_with_measures((measure(1, (beat(0, (tab_note(1, 5, 0),)),)),))
+
+            with patch(
+                "tab_analyzer.ui.load_details_file",
+                return_value={"youtube": {"default_video_id": "abc123", "sync": {}}},
+            ):
+                panel.set_song(song)
+
+            self.assertTrue(panel.youtube_radio.isEnabled())
+            self.assertTrue(panel.youtube_radio.isChecked())
+            self.assertFalse(panel.midi_radio.isChecked())
+        finally:
+            panel.shutdown()
+
+    def test_tab_playback_uses_midi_when_youtube_is_missing(self):
+        panel = TabPlaybackPanel()
+        try:
+            panel.youtube_player.available = True
+            panel.youtube_player._load_video = lambda _video_id: None
+            song = song_with_measures((measure(1, (beat(0, (tab_note(1, 5, 0),)),)),))
+            with patch(
+                "tab_analyzer.ui.load_details_file",
+                return_value={"youtube": {"default_video_id": "abc123", "sync": {}}},
+            ):
+                panel.set_song(song)
+            self.assertTrue(panel.youtube_radio.isChecked())
+
+            with patch("tab_analyzer.ui.load_details_file", return_value={}):
+                panel.set_song(song)
+
+            self.assertFalse(panel.youtube_radio.isEnabled())
+            self.assertTrue(panel.midi_radio.isChecked())
+        finally:
+            panel.shutdown()
+
+    def test_tab_playback_emits_measure_changes_during_playback(self):
+        panel = TabPlaybackPanel()
+        try:
+            song = song_with_measures(
+                (
+                    measure(1, (beat(0, (tab_note(1, 5, 0),)),)),
+                    measure(2, (beat(0, (tab_note(1, 7, 0),)),)),
+                )
+            )
+            panel.song = song
+            panel.score.set_song(song)
+            changed: list[int] = []
+            panel.playbackMeasureChanged.connect(changed.append)
+
+            panel._on_playback_position_changed(song.track.measures[0].start_tick)
+            panel._on_playback_position_changed(song.track.measures[0].start_tick + 480)
+            panel._on_playback_position_changed(song.track.measures[1].start_tick)
+
+            self.assertEqual(changed, [0, 1])
+        finally:
+            panel.shutdown()
+
+    def test_youtube_metronome_starts_with_youtube_playback(self):
+        panel = TabPlaybackPanel()
+        fake = FakeMetronome()
+        try:
+            panel.tab_metronome.close()
+            panel.tab_metronome = fake
+            panel.song = replace(
+                song_with_measures((measure(1, (beat(0, (tab_note(1, 5, 0),)),)),)),
+                tempo=90,
+            )
+            panel.youtube_radio.setEnabled(True)
+            panel.youtube_radio.setChecked(True)
+            panel.youtube_player.playing = True
+            panel.speed_slider.setValue(150)
+
+            panel.metronome_check.setChecked(True)
+
+            self.assertTrue(fake.ticking)
+            self.assertEqual(fake.started, 1)
+            self.assertEqual(fake.bpm, 135)
+            self.assertEqual(fake.beats_per_bar, 4)
+        finally:
+            panel.shutdown()
+
+    def test_youtube_metronome_tracks_speed_and_stops_with_youtube(self):
+        panel = TabPlaybackPanel()
+        fake = FakeMetronome()
+        try:
+            panel.tab_metronome.close()
+            panel.tab_metronome = fake
+            panel.song = replace(
+                song_with_measures((measure(1, (beat(0, (tab_note(1, 5, 0),)),)),)),
+                tempo=90,
+            )
+            panel.youtube_radio.setEnabled(True)
+            panel.youtube_radio.setChecked(True)
+            panel.youtube_player.playing = True
+            panel.metronome_check.setChecked(True)
+
+            panel.speed_slider.setValue(50)
+            self.assertEqual(fake.bpm, 45)
+            self.assertEqual(fake.started, 1)
+
+            panel.youtube_player.playing = False
+            panel._on_playing_changed(False)
+            self.assertFalse(fake.ticking)
+            self.assertGreaterEqual(fake.stopped, 1)
+        finally:
+            panel.shutdown()
+
+    def test_slide_relationships_do_not_connect_to_next_note(self):
+        widget = TabScoreWidget()
+        first_note = replace(tab_note(1, 5, 0), techniques=("slide",))
+        second_note = tab_note(1, 7, 480)
+        first_beat = beat(0, (first_note,))
+        second_beat = beat(480, (second_note,))
+        calls: list[str] = []
+        widget._draw_slide_connection = lambda *_args, **_kwargs: calls.append("connect")
+        widget._draw_slide_out = lambda *_args, **_kwargs: calls.append("out")
+        image = QImage(220, 80, QImage.Format.Format_ARGB32)
+        image.fill(0)
+        painter = QPainter(image)
+        font = QFont("Consolas", 11, QFont.Weight.DemiBold)
+        metrics = QFontMetrics(font)
+        try:
+            widget._draw_note_relationships(
+                painter,
+                [(60, 40, first_note, first_beat), (140, 40, second_note, second_beat)],
+                metrics,
+            )
+        finally:
+            painter.end()
+
+        self.assertEqual(calls, [])
+
+    def test_slide_symbol_is_drawn_before_slide_destination(self):
+        widget = TabScoreWidget()
+        first_note = replace(tab_note(1, 10, 0), techniques=("slide",))
+        second_note = tab_note(1, 20, 480)
+        first_beat = beat(0, (first_note,))
+        second_beat = beat(480, (second_note,))
+        image = QImage(220, 80, QImage.Format.Format_ARGB32)
+        image.fill(0)
+        painter = QPainter(image)
+        font = QFont("Consolas", 11, QFont.Weight.DemiBold)
+        metrics = QFontMetrics(font)
+        calls: list[tuple[int, int]] = []
+        widget._draw_slide_mark = lambda _painter, x, y: calls.append((x, y))
+        try:
+            widget._draw_note_relationships(
+                painter,
+                [(60, 40, first_note, first_beat), (140, 40, second_note, second_beat)],
+                metrics,
+            )
+        finally:
+            painter.end()
+
+        self.assertEqual(len(calls), 1)
+        self.assertGreater(calls[0][0], 60)
+        self.assertLess(calls[0][0], 140)
+
+    def test_slide_source_note_does_not_draw_own_symbol(self):
+        widget = TabScoreWidget()
+        note = replace(tab_note(1, 10, 0), techniques=("slide",))
+        image = QImage(220, 80, QImage.Format.Format_ARGB32)
+        image.fill(0)
+        painter = QPainter(image)
+        font = QFont("Consolas", 11, QFont.Weight.DemiBold)
+        metrics = QFontMetrics(font)
+        calls: list[tuple[int, int]] = []
+        widget._draw_slide_mark = lambda _painter, x, y: calls.append((x, y))
+        try:
+            widget._draw_note_technique_symbols(painter, note, 100, 40, metrics)
+        finally:
+            painter.end()
+
+        self.assertEqual(calls, [])
+
+    def test_palm_mute_spans_consecutive_beats(self):
+        muted_a = replace(tab_note(6, 0, 0), techniques=("palm_mute",))
+        muted_b = replace(tab_note(6, 2, 480), techniques=("palm_mute",))
+        open_note = tab_note(6, 3, 960)
+        measure_data = measure(
+            1,
+            (
+                beat(0, (muted_a,)),
+                beat(480, (muted_b,)),
+                beat(960, (open_note,)),
+            ),
+        )
+        widget = TabScoreWidget()
+        positions = widget._note_positions(measure_data, 54, 475, 100, 13)
+        spans = widget._technique_spans(widget._beat_positions(positions), "palm_mute")
+
+        self.assertEqual(len(spans), 1)
+        self.assertLess(spans[0][0], spans[0][1])
+
+
+if __name__ == "__main__":
+    unittest.main()

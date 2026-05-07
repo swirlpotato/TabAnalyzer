@@ -17,6 +17,9 @@ DRUM_CHANNEL = 9
 GUITAR_PROGRAM = 29
 METRONOME_ACCENT_NOTE = 76
 METRONOME_TICK_NOTE = 77
+MIN_AUDIBLE_NOTE_MS = 32
+MIN_AUDIBLE_MUTED_NOTE_MS = 22
+MIN_AUDIBLE_DRUM_MS = 18
 
 
 @dataclass(frozen=True)
@@ -105,6 +108,9 @@ class TabMidiPlayer(QObject):
         self.start_measure_index = 0
         self.end_measure_index = 0
         self.metronome = False
+        self._ticks_per_ms = 1.0
+        self._note_generation = 0
+        self._active_note_generations: dict[tuple[int, int], int] = {}
 
     @property
     def is_midi_available(self) -> bool:
@@ -147,7 +153,7 @@ class TabMidiPlayer(QObject):
         start_tick = self._play_from_tick(song, start_measure_index, end_measure_index, play_from_measure_index, play_from_tick)
         self.current_tick = float(start_tick)
         self.event_index = _event_index_at_or_after(self.events, start_tick)
-        self.output.all_notes_off()
+        self._stop_active_notes()
         self.clock.start()
         self.timer.start()
         self.playing = True
@@ -156,7 +162,7 @@ class TabMidiPlayer(QObject):
 
     def stop(self, emit: bool = True) -> None:
         self.timer.stop()
-        self.output.all_notes_off()
+        self._stop_active_notes()
         was_playing = self.playing
         self.playing = False
         self.event_index = 0
@@ -204,6 +210,7 @@ class TabMidiPlayer(QObject):
             return
         elapsed_ms = max(0, self.clock.restart())
         ticks_per_ms = (self.song.tempo * (self.speed_percent / 100.0) * TICKS_PER_QUARTER) / 60000.0
+        self._ticks_per_ms = max(0.001, ticks_per_ms)
         self.current_tick += elapsed_ms * ticks_per_ms
 
         while self.event_index < len(self.events) and self.events[self.event_index].tick <= self.current_tick:
@@ -212,7 +219,7 @@ class TabMidiPlayer(QObject):
 
         if self.current_tick >= self.end_tick:
             if self.repeat:
-                self.output.all_notes_off()
+                self._stop_active_notes()
                 self.current_tick = float(self.start_tick)
                 self.event_index = 0
                 self.clock.restart()
@@ -226,9 +233,38 @@ class TabMidiPlayer(QObject):
 
     def _send_event(self, event: PlaybackEvent) -> None:
         if event.kind == "note_on":
-            self.output.note_on(event.note, event.velocity, event.channel)
+            self._start_note(event)
         elif event.kind == "note_off":
+            self._stop_note((event.channel, event.note))
+
+    def _start_note(self, event: PlaybackEvent) -> None:
+        key = (event.channel, event.note)
+        if key in self._active_note_generations:
             self.output.note_off(event.note, event.channel)
+        self._note_generation += 1
+        generation = self._note_generation
+        self._active_note_generations[key] = generation
+        self.output.note_on(event.note, event.velocity, event.channel)
+        _single_shot(self._event_duration_ms(event), lambda item=key, gen=generation: self._finish_note(item, gen))
+
+    def _finish_note(self, key: tuple[int, int], generation: int) -> None:
+        if self._active_note_generations.get(key) != generation:
+            return
+        self._stop_note(key)
+
+    def _stop_note(self, key: tuple[int, int]) -> None:
+        channel, note = key
+        if key in self._active_note_generations:
+            del self._active_note_generations[key]
+        self.output.note_off(note, channel)
+
+    def _stop_active_notes(self) -> None:
+        self._active_note_generations.clear()
+        self.output.all_notes_off()
+
+    def _event_duration_ms(self, event: PlaybackEvent) -> int:
+        duration_ms = round(max(1, event.duration_ticks) / max(0.001, self._ticks_per_ms))
+        return max(_minimum_audible_ms(event), duration_ms)
 
 
 def _build_events(measures: tuple[MeasureData, ...], metronome: bool) -> list[PlaybackEvent]:
@@ -242,7 +278,7 @@ def _build_events(measures: tuple[MeasureData, ...], metronome: bool) -> list[Pl
                 events.extend(_note_events(note, measure_end))
         if metronome:
             events.extend(_metronome_events(measure))
-    return sorted(events, key=lambda event: (event.tick, 0 if event.kind == "note_off" else 1))
+    return sorted(events, key=lambda event: (event.tick, event.channel, event.note))
 
 
 def _note_events(note: TabNote, measure_end_tick: int) -> list[PlaybackEvent]:
@@ -256,10 +292,7 @@ def _note_events(note: TabNote, measure_end_tick: int) -> list[PlaybackEvent]:
         else:
             duration = max(40, round(note.duration_ticks * 0.9))
     off_tick = min(measure_end_tick, note.start_tick + duration)
-    return [
-        PlaybackEvent(note.start_tick, "note_on", note.midi, velocity),
-        PlaybackEvent(off_tick, "note_off", note.midi, 0),
-    ]
+    return [PlaybackEvent(note.start_tick, "note_on", note.midi, velocity, max(1, off_tick - note.start_tick))]
 
 
 def _metronome_events(measure: MeasureData) -> list[PlaybackEvent]:
@@ -270,9 +303,20 @@ def _metronome_events(measure: MeasureData) -> list[PlaybackEvent]:
         tick = measure.start_tick + (index * step)
         note = METRONOME_ACCENT_NOTE if index == 0 else METRONOME_TICK_NOTE
         velocity = 108 if index == 0 else 76
-        events.append(PlaybackEvent(tick, "note_on", note, velocity, channel=DRUM_CHANNEL))
-        events.append(PlaybackEvent(tick + 80, "note_off", note, 0, channel=DRUM_CHANNEL))
+        events.append(PlaybackEvent(tick, "note_on", note, velocity, duration_ticks=80, channel=DRUM_CHANNEL))
     return events
+
+
+def _minimum_audible_ms(event: PlaybackEvent) -> int:
+    if event.channel == DRUM_CHANNEL:
+        return MIN_AUDIBLE_DRUM_MS
+    if event.velocity <= 40:
+        return MIN_AUDIBLE_MUTED_NOTE_MS
+    return MIN_AUDIBLE_NOTE_MS
+
+
+def _single_shot(milliseconds: int, callback) -> None:
+    QTimer.singleShot(max(1, int(milliseconds)), callback)
 
 
 def _time_signature_numerator(time_signature: str) -> int:
