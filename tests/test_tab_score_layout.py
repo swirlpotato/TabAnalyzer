@@ -5,13 +5,15 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont, QFontMetrics, QImage, QPainter, QShortcut
+from PyQt6.QtCore import QPointF, QRect, Qt
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPen, QShortcut
 from PyQt6.QtWidgets import QApplication
 
-from tab_analyzer.ui import TabPlaybackPanel, TabScoreWidget
+from tab_analyzer.scale_blocks import ScaleBlock
+from tab_analyzer.ui import ChordFinderWidget, FretboardWidget, TabPlaybackPanel, TabScoreWidget, _MeasureLayout
+from tab_analyzer.ui import _ChordFinderSearchParams, _chord_finder_search_results
 from tab_analyzer.ui import YOUTUBE_VIEW_HEIGHT, YOUTUBE_VIEW_PIP_MARGIN, YOUTUBE_VIEW_WIDTH
-from tests.helpers import beat, measure, song_with_measures, tab_note
+from tests.helpers import STANDARD_TUNING, beat, measure, song_with_measures, tab_note
 
 
 class FakeMetronome:
@@ -64,6 +66,31 @@ class FakePipView:
 
     def page(self) -> FakeWebPage:
         return self._page
+
+
+class FakeTechniquePainter:
+    def __init__(self) -> None:
+        self._pen = QPen(QColor("#111111"), 1)
+        self.path_pen_widths: list[float] = []
+
+    def save(self) -> None:
+        return
+
+    def restore(self) -> None:
+        return
+
+    def pen(self):
+        return self._pen
+
+    def setPen(self, pen) -> None:
+        if isinstance(pen, QPen):
+            self._pen = pen
+
+    def setBrush(self, _brush) -> None:
+        return
+
+    def drawPath(self, _path) -> None:
+        self.path_pen_widths.append(self._pen.widthF())
 
 
 class TabScoreLayoutTests(unittest.TestCase):
@@ -225,6 +252,150 @@ class TabScoreLayoutTests(unittest.TestCase):
             panel.youtube_player.view = original_view
             panel.close()
             panel.shutdown()
+
+    def test_playback_scroll_avoids_youtube_pip_when_possible(self):
+        panel = TabPlaybackPanel()
+        original_view = panel.youtube_player.view
+        fake_view = FakePipView()
+        try:
+            if original_view is not None:
+                original_view.hide()
+            panel.youtube_player.view = fake_view
+            panel.youtube_radio.setEnabled(True)
+            panel.youtube_radio.setChecked(True)
+            panel.resize(900, 700)
+            panel.show()
+            song = song_with_measures(
+                tuple(
+                    measure(index + 1, (beat(0, (tab_note(1, 5, 0),)),))
+                    for index in range(80)
+                )
+            )
+            panel.song = song
+            panel.score.set_song(song)
+            self.app.processEvents()
+
+            viewport = panel.score_scroll.viewport()
+            pip_top = max(0, viewport.height() - YOUTUBE_VIEW_HEIGHT - YOUTUBE_VIEW_PIP_MARGIN)
+            padding = int(24 * panel.score.zoom)
+            layout = _MeasureLayout(0, QRect(viewport.width() - 180, 760, 160, 80))
+
+            panel._scroll_score_layout_into_view(layout)
+
+            expected_minimum = layout.rect.bottom() + padding - pip_top
+            self.assertGreaterEqual(panel.score_scroll.verticalScrollBar().value(), expected_minimum)
+        finally:
+            panel.youtube_player.view = original_view
+            panel.close()
+            panel.shutdown()
+
+    def test_fretboard_auto_selects_scale_block_with_most_played_notes(self):
+        widget = FretboardWidget()
+        measure_data = measure(
+            1,
+            (
+                beat(0, (tab_note(2, 10, 0),)),
+                beat(480, (tab_note(3, 9, 480),)),
+                beat(960, (tab_note(4, 9, 960),)),
+                beat(1440, (tab_note(1, 15, 1440),)),
+            ),
+        )
+        widget.measure = measure_data
+        blocks = (
+            ScaleBlock(0, 14, 16, None, None, 0, ((0, 15),)),
+            ScaleBlock(1, 9, 13, None, None, 1, ((1, 10), (2, 9), (3, 9))),
+        )
+
+        self.assertEqual(widget._active_scale_block_index(blocks), 1)
+
+    def test_manual_scale_block_selection_still_wins(self):
+        widget = FretboardWidget()
+        widget.measure = measure(1, (beat(0, (tab_note(2, 10, 0),)),))
+        widget.selected_scale_block_index = 0
+        blocks = (
+            ScaleBlock(0, 14, 16, None, None, 0, ((0, 15),)),
+            ScaleBlock(1, 9, 13, None, None, 1, ((1, 10), (2, 9), (3, 9))),
+        )
+
+        self.assertEqual(widget._active_scale_block_index(blocks), 0)
+
+    def test_bend_symbol_uses_half_size_arrow_shape(self):
+        widget = TabScoreWidget()
+        widget.zoom = 1.0
+        image = QImage(140, 80, QImage.Format.Format_ARGB32)
+        image.fill(0)
+        painter = QPainter(image)
+        tips: list[tuple[QPointF, float | None]] = []
+        widget._draw_bend_arrow_triangle = lambda _painter, tip, up, scale=None: tips.append((tip, scale))
+        try:
+            widget._draw_bend_symbol(painter, 20, 60, release=False, semitones=1)
+        finally:
+            painter.end()
+
+        self.assertEqual(len(tips), 1)
+        self.assertLessEqual(tips[0][0].x() - 20, 19)
+        self.assertEqual(tips[0][1], 0.5)
+
+    def test_vibrato_symbol_uses_bold_pen(self):
+        widget = TabScoreWidget()
+        widget.zoom = 1.0
+        painter = FakeTechniquePainter()
+
+        widget._draw_technique_symbol(painter, "vibrato", 40, 40)
+
+        self.assertTrue(painter.path_pen_widths)
+        self.assertGreaterEqual(painter.path_pen_widths[-1], 2.0)
+
+    def test_chord_finder_ignores_single_selected_note(self):
+        result = _chord_finder_search_results(
+            _ChordFinderSearchParams(
+                note_pcs=(0,),
+                selected_positions=((0, 0),),
+                root_filter=None,
+                type_filter=None,
+                string_pitches=STANDARD_TUNING,
+                fret_count=24,
+            )
+        )
+
+        self.assertEqual(result.entries, ())
+
+    def test_chord_finder_searches_after_two_selected_notes(self):
+        result = _chord_finder_search_results(
+            _ChordFinderSearchParams(
+                note_pcs=(0, 4),
+                selected_positions=((1, 1), (0, 0)),
+                root_filter=0,
+                type_filter=None,
+                string_pitches=STANDARD_TUNING,
+                fret_count=24,
+            )
+        )
+
+        self.assertTrue(result.entries)
+        self.assertTrue(all({0, 4}.issubset(set(match.candidate.pitch_classes)) for match, _position in result.entries))
+
+    def test_chord_finder_widget_starts_background_search(self):
+        widget = ChordFinderWidget()
+        started: list[_ChordFinderSearchParams] = []
+        widget._start_chord_search = lambda params: started.append(params)  # type: ignore[method-assign]
+        widget.selected_positions = [(1, 1), (0, 0)]
+
+        widget._rebuild_matches()
+
+        self.assertTrue(widget._searching)
+        self.assertEqual(len(started), 1)
+
+    def test_chord_finder_widget_does_not_search_single_note(self):
+        widget = ChordFinderWidget()
+        started: list[_ChordFinderSearchParams] = []
+        widget._start_chord_search = lambda params: started.append(params)  # type: ignore[method-assign]
+        widget.selected_positions = [(1, 1)]
+
+        widget._rebuild_matches()
+
+        self.assertFalse(widget._searching)
+        self.assertEqual(started, [])
 
     def test_tab_playback_defaults_to_youtube_when_available(self):
         panel = TabPlaybackPanel()

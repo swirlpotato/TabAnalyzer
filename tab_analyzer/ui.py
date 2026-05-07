@@ -2076,7 +2076,10 @@ class TabScoreWidget(QWidget):
         if "trill" in techniques:
             self._draw_trill_symbol(painter, x, next_above_y())
         if "vibrato" in techniques:
-            painter.setPen(QPen(gray, max(1, int(1.15 * self.zoom))))
+            vibrato_pen = QPen(gray, max(2, int(2.4 * self.zoom)))
+            vibrato_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            vibrato_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(vibrato_pen)
             self._draw_wavy_symbol(
                 painter,
                 x + text_half + int(3 * self.zoom),
@@ -2131,6 +2134,10 @@ class TabScoreWidget(QWidget):
         elif technique == "release_bend":
             self._draw_bend_symbol(painter, x, y, release=True, semitones=bend_semitones)
         elif technique == "vibrato":
+            vibrato_pen = QPen(accent, max(2, int(2.4 * self.zoom)))
+            vibrato_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            vibrato_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(vibrato_pen)
             self._draw_wavy_symbol(painter, x - int(8 * self.zoom), y, int(22 * self.zoom), max(1, int(1.8 * self.zoom)))
         elif technique == "staccato":
             self._draw_staccato_symbol(painter, x, y)
@@ -2158,7 +2165,7 @@ class TabScoreWidget(QWidget):
         release: bool,
         semitones: float | None = None,
     ) -> None:
-        scale = self.zoom
+        scale = self.zoom * 0.5
         pen = QPen(painter.pen().color(), max(1, int(1.15 * scale)))
         pen.setCapStyle(Qt.PenCapStyle.SquareCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
@@ -2174,7 +2181,7 @@ class TabScoreWidget(QWidget):
             peak,
         )
         painter.drawPath(path)
-        self._draw_bend_arrow_triangle(painter, peak, up=True)
+        self._draw_bend_arrow_triangle(painter, peak, up=True, scale=scale)
 
         if release:
             end = QPointF(x + int(72 * scale), y - int(16 * scale))
@@ -2185,7 +2192,7 @@ class TabScoreWidget(QWidget):
                 end,
             )
             painter.drawPath(release_path)
-            self._draw_bend_arrow_triangle(painter, end, up=False)
+            self._draw_bend_arrow_triangle(painter, end, up=False, scale=scale)
 
         label = self._bend_amount_label(semitones)
         if label:
@@ -2200,9 +2207,10 @@ class TabScoreWidget(QWidget):
                 label,
             )
 
-    def _draw_bend_arrow_triangle(self, painter: QPainter, tip: QPointF, up: bool) -> None:
-        size = max(4, int(4.1 * self.zoom))
-        half = max(3, int(4 * self.zoom))
+    def _draw_bend_arrow_triangle(self, painter: QPainter, tip: QPointF, up: bool, scale: float | None = None) -> None:
+        scale = self.zoom if scale is None else scale
+        size = max(2, int(4.1 * scale))
+        half = max(2, int(4 * scale))
         path = QPainterPath(tip)
         if up:
             path.lineTo(QPointF(tip.x() - half, tip.y() + size))
@@ -3163,6 +3171,8 @@ class TabPlaybackPanel(QWidget):
         self.score_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.score_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.score_scroll.setWidget(self.score)
+        self.score_scroll.installEventFilter(self)
+        self.score_scroll.viewport().installEventFilter(self)
         layout.addWidget(self.score_scroll, 1)
         self._position_youtube_view()
 
@@ -3218,6 +3228,16 @@ class TabPlaybackPanel(QWidget):
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
         self._position_youtube_view()
+
+    def eventFilter(self, watched, event) -> bool:  # type: ignore[override]
+        if (watched is self.score_scroll or watched is self.score_scroll.viewport()) and event.type() in {
+            QEvent.Type.Resize,
+            QEvent.Type.Move,
+            QEvent.Type.Show,
+            QEvent.Type.LayoutRequest,
+        }:
+            QTimer.singleShot(0, self._position_youtube_view)
+        return super().eventFilter(watched, event)
 
     def set_song(self, song: SongData | None) -> None:
         self._stop()
@@ -3780,10 +3800,44 @@ class TabPlaybackPanel(QWidget):
         target_bottom = layout.rect.bottom() + padding
         visible_top = scroll_bar.value()
         visible_bottom = visible_top + viewport_height
+        target_value = visible_top
         if target_top < visible_top:
-            scroll_bar.setValue(target_top)
+            target_value = target_top
         elif target_bottom > visible_bottom:
-            scroll_bar.setValue(target_bottom - viewport_height)
+            target_value = target_bottom - viewport_height
+        target_value = self._scroll_value_avoiding_youtube_pip(layout, target_value, padding)
+        scroll_bar.setValue(target_value)
+
+    def _scroll_value_avoiding_youtube_pip(self, layout: _MeasureLayout, scroll_value: int, padding: int) -> int:
+        pip_rect = self._youtube_pip_viewport_rect()
+        if pip_rect is None:
+            return scroll_value
+        layout_view_rect = QRect(
+            layout.rect.left(),
+            layout.rect.top() - scroll_value,
+            layout.rect.width(),
+            layout.rect.height(),
+        ).adjusted(-padding, -padding, padding, padding)
+        if not layout_view_rect.intersects(pip_rect):
+            return scroll_value
+        if layout_view_rect.height() > pip_rect.top():
+            return scroll_value
+        avoid_value = layout.rect.bottom() + padding - pip_rect.top()
+        scroll_bar = self.score_scroll.verticalScrollBar()
+        if avoid_value > scroll_bar.maximum():
+            return scroll_value
+        return max(scroll_value, max(0, avoid_value))
+
+    def _youtube_pip_viewport_rect(self) -> QRect | None:
+        if not self._use_youtube_source() or self.youtube_player.view is None:
+            return None
+        viewport = self.score_scroll.viewport()
+        return QRect(
+            max(0, viewport.width() - YOUTUBE_VIEW_WIDTH - YOUTUBE_VIEW_PIP_MARGIN),
+            max(0, viewport.height() - YOUTUBE_VIEW_HEIGHT - YOUTUBE_VIEW_PIP_MARGIN),
+            YOUTUBE_VIEW_WIDTH,
+            YOUTUBE_VIEW_HEIGHT,
+        )
 
     def _on_playing_changed(self, playing: bool) -> None:
         active = self._is_tab_playing()
@@ -3966,7 +4020,23 @@ class FretboardWidget(QWidget):
         block_indexes = {block.index for block in blocks}
         if self.selected_scale_block_index in block_indexes:
             return self.selected_scale_block_index
-        return min(blocks, key=lambda block: (block.start_fret, block.first_order, block.index)).index
+        return max(
+            blocks,
+            key=lambda block: (
+                self._scale_block_played_note_count(block),
+                len(block.played_positions),
+                -block.first_order,
+                -block.start_fret,
+                -block.index,
+            ),
+        ).index
+
+    def _scale_block_played_note_count(self, block: ScaleBlock) -> int:
+        if self.measure is None:
+            return len(block.played_positions)
+        notes = self.segment.notes if self.segment is not None else self.measure.notes
+        positions = set(block.played_positions)
+        return sum(1 for note in notes if (int(note.string) - 1, int(note.fret)) in positions)
 
     def _draw_scale_block_buttons(
         self,
@@ -5429,6 +5499,135 @@ class ChordPositionsWidget(QWidget):
         return ", ".join(missing) if missing else "없음"
 
 
+class _ChordFinderSearchParams(NamedTuple):
+    note_pcs: tuple[int, ...]
+    selected_positions: tuple[tuple[int, int], ...]
+    root_filter: int | None
+    type_filter: str | None
+    string_pitches: tuple[int, ...]
+    fret_count: int
+
+
+class _ChordFinderSearchResult(NamedTuple):
+    matches: tuple[ChordMatch, ...]
+    entries: tuple[tuple[ChordMatch, ChordPosition], ...]
+    match_count: int
+
+
+def _chord_finder_search_results(params: _ChordFinderSearchParams) -> _ChordFinderSearchResult:
+    note_pcs = params.note_pcs
+    selected_positions = params.selected_positions
+    if len(selected_positions) == 1:
+        return _ChordFinderSearchResult((), (), 0)
+
+    if note_pcs:
+        matches = find_chords_containing_pitches(
+            note_pcs,
+            root_pc=params.root_filter,
+            chord_type_suffix=params.type_filter,
+        )
+    elif params.root_filter is None or params.type_filter is None:
+        matches = ()
+    else:
+        matches = find_chords_by_filter(
+            root_pc=params.root_filter,
+            chord_type_suffix=params.type_filter,
+        )
+
+    if not matches or (note_pcs and not _selected_fret_span_can_fit(selected_positions)):
+        return _ChordFinderSearchResult((), (), 0)
+
+    entries: list[tuple[ChordMatch, ChordPosition]] = []
+    listed_matches: list[ChordMatch] = []
+    position_cache: dict[tuple[int, str, tuple[int, ...]], tuple[ChordPosition, ...]] = {}
+    positions_per_filter_chord = 20 if not note_pcs and params.root_filter is not None and params.type_filter is not None else 1
+
+    for match in matches:
+        positions = _positions_for_chord_finder_match(match, params, position_cache)
+        if note_pcs:
+            positions = tuple(position for position in positions if _position_contains_selected_frets(position, selected_positions))
+        if not positions:
+            continue
+        for position in positions[:positions_per_filter_chord]:
+            entries.append((match, position))
+            listed_matches.append(match)
+            if len(entries) >= MAX_CHORD_FINDER_RESULTS:
+                break
+        if len(entries) >= MAX_CHORD_FINDER_RESULTS:
+            break
+
+    return _ChordFinderSearchResult(tuple(listed_matches), tuple(entries), len(entries))
+
+
+def _positions_for_chord_finder_match(
+    match: ChordMatch,
+    params: _ChordFinderSearchParams,
+    position_cache: dict[tuple[int, str, tuple[int, ...]], tuple[ChordPosition, ...]],
+) -> tuple[ChordPosition, ...]:
+    key = (match.candidate.root_pc, match.chord_type.suffix, match.candidate.intervals)
+    if key not in position_cache:
+        positions = generate_chord_positions(
+            match.candidate,
+            params.string_pitches,
+            params.fret_count,
+            max_positions=MAX_CHORD_POSITIONS * len(CHORD_POSITION_CATEGORIES),
+        )
+        position_cache[key] = tuple(position for position in positions if _barre_open_strings_are_playable(position))
+    return position_cache[key]
+
+
+def _position_contains_selected_frets(position: ChordPosition, selected_positions: tuple[tuple[int, int], ...]) -> bool:
+    for string_index, fret in selected_positions:
+        if string_index < 0 or string_index >= len(position.frets_high_to_low):
+            return False
+        if position.frets_high_to_low[string_index] != fret:
+            return False
+    return True
+
+
+def _selected_fret_span_can_fit(selected_positions: tuple[tuple[int, int], ...]) -> bool:
+    fretted = [fret for _string_index, fret in selected_positions if fret > 0]
+    if not fretted:
+        return True
+    if 0 in [fret for _string_index, fret in selected_positions] and max(fretted) > MAX_FRET_SPAN - 1:
+        return False
+    return max(fretted) - min(fretted) <= MAX_FRET_SPAN - 1
+
+
+def _barre_open_strings_are_playable(position: ChordPosition) -> bool:
+    if position.barre_fret is None:
+        return True
+    barre_strings = [
+        string_index
+        for string_index, fret in enumerate(position.frets_high_to_low)
+        if fret == position.barre_fret
+    ]
+    if len(barre_strings) < 2:
+        return True
+    thinnest_barred_string = min(barre_strings)
+    return all(
+        fret != 0
+        for string_index, fret in enumerate(position.frets_high_to_low)
+        if string_index < thinnest_barred_string
+    )
+
+
+class _ChordFinderSearchWorker(QObject):
+    finished = pyqtSignal(int, object)
+    failed = pyqtSignal(int, str)
+
+    def __init__(self, token: int, params: _ChordFinderSearchParams) -> None:
+        super().__init__()
+        self.token = token
+        self.params = params
+
+    def run(self) -> None:
+        try:
+            self.finished.emit(self.token, _chord_finder_search_results(self.params))
+        except Exception as exc:  # noqa: BLE001 - background errors should not take down the UI.
+            self.failed.emit(self.token, str(exc))
+
+
 class ChordFinderWidget(QWidget):
     def __init__(self) -> None:
         super().__init__()
@@ -5440,6 +5639,11 @@ class ChordFinderWidget(QWidget):
         self.entries: tuple[tuple[ChordMatch, ChordPosition], ...] = ()
         self.match_count = 0
         self._position_cache: dict[tuple[int, str, tuple[int, ...], tuple[int, ...], int], tuple[ChordPosition, ...]] = {}
+        self._searching = False
+        self._search_token = 0
+        self._chord_search_thread: QThread | None = None
+        self._chord_search_worker: _ChordFinderSearchWorker | None = None
+        self._pending_search_params: _ChordFinderSearchParams | None = None
         self._note_hits: list[tuple[QRect, int, int]] = []
         self._content_height = 560
         self.fretboard_scroll = QScrollBar(Qt.Orientation.Horizontal, self)
@@ -5483,6 +5687,13 @@ class ChordFinderWidget(QWidget):
         self._rebuild_layout()
         self.update()
 
+    def shutdown(self) -> None:
+        self._pending_search_params = None
+        self._search_token += 1
+        if self._chord_search_thread is not None and self._chord_search_thread.isRunning():
+            self._chord_search_thread.quit()
+            self._chord_search_thread.wait(2000)
+
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
         self._sync_fretboard_scrollbar()
@@ -5518,52 +5729,87 @@ class ChordFinderWidget(QWidget):
         self._draw_results(painter)
 
     def _rebuild_matches(self) -> None:
+        params = self._search_params()
+        self._search_token += 1
+        self._pending_search_params = None
+        if params is None:
+            self._searching = False
+            self.matches = ()
+            self.entries = ()
+            self.match_count = 0
+            return
+
+        self._searching = True
+        self.matches = ()
+        self.entries = ()
+        self.match_count = 0
+        if self._chord_search_thread is not None and self._chord_search_thread.isRunning():
+            self._pending_search_params = params
+            return
+        self._start_chord_search(params)
+
+    def _search_params(self) -> _ChordFinderSearchParams | None:
+        if len(self.selected_positions) == 1:
+            return None
         note_pcs = self._selected_note_pcs()
-        if note_pcs:
-            matches = find_chords_containing_pitches(
-                note_pcs,
-                root_pc=self.root_filter,
-                chord_type_suffix=self.type_filter,
-            )
-        elif self.root_filter is None or self.type_filter is None:
-            matches = ()
-        else:
-            matches = find_chords_by_filter(
-                root_pc=self.root_filter,
-                chord_type_suffix=self.type_filter,
-            )
+        if not note_pcs and (self.root_filter is None or self.type_filter is None):
+            return None
+        return _ChordFinderSearchParams(
+            note_pcs=note_pcs,
+            selected_positions=tuple(self.selected_positions),
+            root_filter=self.root_filter,
+            type_filter=self.type_filter,
+            string_pitches=self._string_pitches(),
+            fret_count=self._fret_count(),
+        )
 
-        if not matches:
-            self.matches = ()
-            self.entries = ()
-            self.match_count = 0
+    def _start_chord_search(self, params: _ChordFinderSearchParams) -> None:
+        token = self._search_token
+        thread = QThread(self)
+        worker = _ChordFinderSearchWorker(token, params)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_chord_search_finished)
+        worker.failed.connect(self._on_chord_search_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        worker.failed.connect(worker.deleteLater)
+        thread.finished.connect(self._on_chord_search_thread_finished)
+        thread.finished.connect(thread.deleteLater)
+        self._chord_search_thread = thread
+        self._chord_search_worker = worker
+        thread.start()
+
+    def _on_chord_search_finished(self, token: int, result: object) -> None:
+        if token != self._search_token or not isinstance(result, _ChordFinderSearchResult):
             return
-        if note_pcs and not self._selected_fret_span_can_fit():
-            self.matches = ()
-            self.entries = ()
-            self.match_count = 0
+        self._searching = False
+        self.matches = result.matches
+        self.entries = result.entries
+        self.match_count = result.match_count
+        self._rebuild_layout()
+        self.update()
+
+    def _on_chord_search_failed(self, token: int, message: str) -> None:
+        if token != self._search_token:
             return
+        self._searching = False
+        self.matches = ()
+        self.entries = ()
+        self.match_count = 0
+        self._rebuild_layout()
+        self.update()
 
-        entries: list[tuple[ChordMatch, ChordPosition]] = []
-        listed_matches: list[ChordMatch] = []
-        positions_per_filter_chord = 20 if not note_pcs and self.root_filter is not None and self.type_filter is not None else 1
-        for match in matches:
-            positions = self._positions_for_match(match)
-            if note_pcs:
-                positions = tuple(position for position in positions if self._position_contains_selected_frets(position))
-            if not positions:
-                continue
-            for position in positions[:positions_per_filter_chord]:
-                entries.append((match, position))
-                listed_matches.append(match)
-                if len(entries) >= MAX_CHORD_FINDER_RESULTS:
-                    break
-            if len(entries) >= MAX_CHORD_FINDER_RESULTS:
-                break
-
-        self.match_count = len(entries)
-        self.entries = tuple(entries)
-        self.matches = tuple(listed_matches)
+    def _on_chord_search_thread_finished(self) -> None:
+        self._chord_search_thread = None
+        self._chord_search_worker = None
+        if self._pending_search_params is None:
+            return
+        params = self._pending_search_params
+        self._pending_search_params = None
+        self._search_token += 1
+        self._start_chord_search(params)
 
     def _rebuild_layout(self) -> None:
         self._sync_fretboard_scrollbar()
@@ -5748,6 +5994,12 @@ class ChordFinderWidget(QWidget):
     def _draw_results(self, painter: QPainter) -> None:
         y = self._results_start_y()
         selected_notes = self._selected_note_names()
+        if self._searching:
+            self._draw_message(painter, y, "코드 검색 중...")
+            return
+        if len(self.selected_positions) == 1:
+            self._draw_message(painter, y, "노트를 2개 이상 선택하면 코드를 찾습니다.")
+            return
         if not selected_notes and (self.root_filter is None or self.type_filter is None):
             self._draw_message(painter, y, "선택된 음 없음")
             return
@@ -7460,6 +7712,7 @@ class TabAnalyzerWindow(QMainWindow):
         if not self._maybe_save_memo_changes():
             event.ignore()
             return
+        self.chord_finder_widget.shutdown()
         self.tab_playback_panel.shutdown()
         self._clear_memo_asset_dir()
         super().closeEvent(event)
