@@ -74,7 +74,7 @@ except Exception:  # noqa: BLE001 - UI shows a graceful recording-unavailable st
     QMediaPlayer = None
     QMediaRecorder = None
 
-from .analysis import (
+from ..analysis import (
     Candidate,
     SCALE_PATTERNS,
     candidate_display_label,
@@ -82,7 +82,7 @@ from .analysis import (
     interval_name,
     pitch_class_name,
 )
-from .chord_positions import (
+from ..chord_positions import (
     CHORD_POSITION_CATEGORIES,
     ChordPosition,
     MAX_CHORD_POSITIONS,
@@ -94,16 +94,16 @@ from .chord_positions import (
     generate_chord_positions,
     group_chord_positions_by_category,
 )
-from .chord_finder import (
+from ..chord_finder import (
     CHORD_FINDER_TYPES,
     ChordMatch,
     find_chords_by_filter,
     find_chords_containing_pitches,
 )
-from .gp_loader import MeasureData, SegmentData, SongData, default_track_index, list_tracks, load_gp_file, retune_song
-from .i18n import apply_translations, tr
-from .midi_player import MidiOutput, TICKS_PER_QUARTER, TabMidiPlayer
-from .scale_blocks import (
+from ..gp_loader import MeasureData, SegmentData, SongData, default_track_index, list_tracks, load_gp_file, retune_song
+from ..i18n import apply_translations, tr
+from ..midi_player import MidiOutput, TICKS_PER_QUARTER, TabMidiPlayer
+from ..scale_blocks import (
     ScaleBlock,
     ScaleBlockUsage,
     ScaleSpan,
@@ -114,7 +114,7 @@ from .scale_blocks import (
     infer_song_scale_block_usages,
     scale_block_spans,
 )
-from .songsterr import (
+from ..songsterr import (
     COOKIE_STORE_PATH,
     SONGSTERR_BASE_URL,
     SongsterrAuthError,
@@ -125,16 +125,41 @@ from .songsterr import (
     save_cookie_header,
     search_tabs,
 )
-from .theory import TheoryExplainer
-from .tunings import TuningPreset, load_tuning_presets
-from .version import __version__
+from ..theory import TheoryExplainer
+from ..tunings import TuningPreset, load_tuning_presets
+from ..version import __version__
+from .chord_search import (
+    MAX_CHORD_FINDER_RESULTS,
+    _ChordFinderSearchParams,
+    _ChordFinderSearchResult,
+    _ChordFinderSearchWorker,
+    _chord_finder_search_results,
+)
+from .icons import _delete_recording_icon, _draw_post_it_icon, _icon_button, _player_icon, _post_it_icon_rect
+from .memo_io import (
+    _legacy_memo_path_for_tab,
+    _measure_note_text,
+    _memo_autosave_path,
+    _memo_path_for_tab,
+    _read_memo_package,
+    _render_markdown_preview,
+    _write_memo_package,
+)
+from .youtube import (
+    YOUTUBE_VIEW_HEIGHT,
+    YOUTUBE_VIEW_PIP_MARGIN,
+    YOUTUBE_VIEW_WIDTH,
+    _allow_qt_webengine_autoplay,
+    _make_youtube_view_non_interactive,
+    _set_webengine_autoplay_allowed,
+    _set_youtube_view_size,
+    _youtube_player_html,
+    _youtube_player_url,
+)
 
 
-PROJECT_ROOT_PATH = Path(__file__).resolve().parent.parent
+PROJECT_ROOT_PATH = Path(__file__).resolve().parent.parent.parent
 SONGSTERR_DOWNLOAD_DIR = PROJECT_ROOT_PATH / "Downloads"
-YOUTUBE_VIEW_WIDTH = 356
-YOUTUBE_VIEW_HEIGHT = 200
-YOUTUBE_VIEW_PIP_MARGIN = 12
 RECENT_FILES_PATH = COOKIE_STORE_PATH.with_name("recent_files.json")
 MAX_RECENT_FILES = 10
 
@@ -234,7 +259,6 @@ SCALE_POSITION_DISPLAY_NAMES = {
 SCALE_POSITION_ROOT_LABELS = dict(SCALE_POSITION_ROOT_OPTIONS)
 DEFAULT_FINDER_STRING_PITCHES_HIGH_TO_LOW = (64, 59, 55, 50, 45, 40)
 DEFAULT_FINDER_FRET_COUNT = 24
-MAX_CHORD_FINDER_RESULTS = 120
 
 
 def fretboard_string_label(midi_note: int, string_index: int, prefer_flats: bool | None) -> str:
@@ -272,13 +296,6 @@ class _MemoIconHit(NamedTuple):
 
 
 APP_ICON_PATH = PROJECT_ROOT_PATH / "assets" / "app_icon.png"
-
-
-def _allow_qt_webengine_autoplay() -> None:
-    flag = "--autoplay-policy=no-user-gesture-required"
-    existing = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
-    if flag not in existing.split():
-        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = f"{existing} {flag}".strip()
 
 
 def _recent_files_store_path(path: str | Path | None = None) -> Path:
@@ -352,306 +369,6 @@ def remove_recent_file(file_path: str | Path, path: str | Path | None = None) ->
 
 APP_ICON_ICO_PATH = PROJECT_ROOT_PATH / "assets" / "app_icon.ico"
 MANUAL_PATH = PROJECT_ROOT_PATH / "docs" / "manual.html"
-MEMO_MARKER = "<!-- TAB_ANALYZER_MEMO_V1 -->"
-MMDX_MARKER = "TAB_ANALYZER_MMDX_V1"
-MMDX_MANIFEST_NAME = "manifest.json"
-MARKDOWN_IMAGE_PATTERN = re.compile(r"!\[[^\]]*\]\(([^)\n]+)\)")
-HTML_IMAGE_PATTERN = re.compile(r"(<img\b[^>]*\bsrc=[\"'])([^\"']+)([\"'][^>]*>)", re.IGNORECASE)
-SAFE_ASSET_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
-
-
-def _measure_note_text(text: str | None) -> str:
-    return (text or "").strip()
-
-
-def _memo_path_for_tab(path: Path) -> Path:
-    return path.with_name(f"memo_{path.name}.mmdx")
-
-
-def _legacy_memo_path_for_tab(path: Path) -> Path:
-    return path.with_name(f"memo_{path.name}.md")
-
-
-def _memo_autosave_path(path: Path) -> Path:
-    return path.with_name(f".memo_{path.name}.autosave.mmdx")
-
-
-def _serialize_legacy_memos(source_path: Path | None, memos: dict[int, str]) -> str:
-    source = source_path.name if source_path is not None else ""
-    lines = [
-        "# Tab Analyzer Memo",
-        "",
-        MEMO_MARKER,
-        f"source: {source}",
-        f"saved_at: {datetime.now().isoformat(timespec='seconds')}",
-        "",
-    ]
-    for number in sorted(memos):
-        text = _measure_note_text(memos[number])
-        if not text:
-            continue
-        lines.extend([f"## M{number}", "", text, ""])
-    return "\n".join(lines).rstrip() + "\n"
-
-
-def _parse_memos(markdown: str) -> dict[int, str]:
-    memos: dict[int, str] = {}
-    current: int | None = None
-    buffer: list[str] = []
-    heading = re.compile(r"^##\s+M(\d+)\b")
-
-    def flush() -> None:
-        if current is None:
-            return
-        text = "\n".join(buffer).strip()
-        if text:
-            memos[current] = text
-
-    for line in markdown.splitlines():
-        match = heading.match(line.strip())
-        if match:
-            flush()
-            current = int(match.group(1))
-            buffer = []
-            continue
-        if current is not None:
-            buffer.append(line)
-    flush()
-    return memos
-
-
-def _write_memo_package(path: Path, source_path: Path | None, memos: dict[int, str], base_dirs: tuple[Path, ...] = ()) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    assets: dict[str, Path] = {}
-    manifest = {
-        "format": MMDX_MARKER,
-        "source": source_path.name if source_path is not None else "",
-        "saved_at": datetime.now().isoformat(timespec="seconds"),
-    }
-    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr(MMDX_MANIFEST_NAME, json.dumps(manifest, ensure_ascii=False, indent=2))
-        for number in sorted(memos):
-            text = _measure_note_text(memos[number])
-            if not text:
-                continue
-            rewritten = _rewrite_memo_image_references(text, number, base_dirs, assets)
-            archive.writestr(f"M{number}.md", rewritten.rstrip() + "\n")
-        for archive_name, source in sorted(assets.items()):
-            archive.write(source, archive_name)
-
-
-def _read_memo_package(path: Path, extract_dir: Path | None = None) -> dict[int, str]:
-    if path.suffix.lower() != ".mmdx":
-        return _parse_memos(path.read_text(encoding="utf-8"))
-
-    memos: dict[int, str] = {}
-    with zipfile.ZipFile(path, "r") as archive:
-        for info in archive.infolist():
-            if info.is_dir() or not _safe_zip_member(info.filename):
-                continue
-            member_path = PurePosixPath(info.filename.replace("\\", "/"))
-            match = re.fullmatch(r"M(\d+)\.md", member_path.name)
-            if match and len(member_path.parts) == 1:
-                memos[int(match.group(1))] = archive.read(info).decode("utf-8").strip()
-            if extract_dir is not None:
-                target = extract_dir.joinpath(*member_path.parts)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                with archive.open(info, "r") as source, target.open("wb") as destination:
-                    shutil.copyfileobj(source, destination)
-    return {number: text for number, text in memos.items() if _measure_note_text(text)}
-
-
-def _safe_zip_member(name: str) -> bool:
-    member_path = PurePosixPath(name.replace("\\", "/"))
-    return not member_path.is_absolute() and ".." not in member_path.parts
-
-
-def _rewrite_memo_image_references(text: str, measure_number: int, base_dirs: tuple[Path, ...], assets: dict[str, Path]) -> str:
-    def markdown_replacer(match: re.Match[str]) -> str:
-        raw_target = match.group(1)
-        target = _image_target_from_markdown(raw_target)
-        replacement = _memo_asset_reference(target, measure_number, base_dirs, assets)
-        if replacement == target:
-            return match.group(0)
-        return match.group(0).replace(target, replacement, 1)
-
-    def html_replacer(match: re.Match[str]) -> str:
-        target = match.group(2)
-        replacement = _memo_asset_reference(target, measure_number, base_dirs, assets)
-        return f"{match.group(1)}{replacement}{match.group(3)}"
-
-    text = MARKDOWN_IMAGE_PATTERN.sub(markdown_replacer, text)
-    return HTML_IMAGE_PATTERN.sub(html_replacer, text)
-
-
-def _image_target_from_markdown(raw_target: str) -> str:
-    target = raw_target.strip()
-    if target.startswith("<") and ">" in target:
-        return target[1 : target.index(">")]
-    return target.strip("\"'")
-
-
-def _memo_asset_reference(target: str, measure_number: int, base_dirs: tuple[Path, ...], assets: dict[str, Path]) -> str:
-    source = _resolve_memo_asset(target, base_dirs)
-    if source is None:
-        return target
-    archive_name = _unique_memo_asset_name(measure_number, source, assets)
-    assets[archive_name] = source
-    return archive_name
-
-
-def _resolve_memo_asset(target: str, base_dirs: tuple[Path, ...]) -> Path | None:
-    if _is_external_asset_reference(target):
-        return None
-    cleaned = unquote(target).strip().strip("\"'")
-    if not cleaned:
-        return None
-    candidate = Path(cleaned)
-    candidates = [candidate] if candidate.is_absolute() else [base / cleaned for base in base_dirs if base is not None]
-    for item in candidates:
-        try:
-            resolved = item.expanduser().resolve()
-        except OSError:
-            continue
-        if resolved.is_file():
-            return resolved
-    return None
-
-
-def _is_external_asset_reference(target: str) -> bool:
-    value = target.strip().lower()
-    if not value or value.startswith("#"):
-        return True
-    if re.match(r"^[a-z]:[\\/]", value):
-        return False
-    return re.match(r"^[a-z][a-z0-9+.-]*:", value) is not None
-
-
-def _unique_memo_asset_name(measure_number: int, source: Path, assets: dict[str, Path]) -> str:
-    safe_name = SAFE_ASSET_PATTERN.sub("_", source.name).strip("._") or "image"
-    stem = Path(safe_name).stem or "image"
-    suffix = Path(safe_name).suffix
-    candidate = f"M{measure_number}_{stem}{suffix}"
-    counter = 2
-    while candidate in assets and assets[candidate] != source:
-        candidate = f"M{measure_number}_{stem}_{counter}{suffix}"
-        counter += 1
-    return candidate
-
-
-def _render_markdown_preview(markdown_text: str) -> str | None:
-    try:
-        from markdown_editor.editor import MarkdownDocument
-    except Exception:  # noqa: BLE001 - Markdown-Editor is optional at runtime until requirements are installed.
-        return None
-    try:
-        document = MarkdownDocument()
-        document.text = markdown_text
-        return str(document.getHtml())
-    except Exception:  # noqa: BLE001 - fallback to Qt's built-in Markdown renderer.
-        return None
-
-
-def _icon_button(icon: QIcon, tooltip: str, size: int = 30) -> QPushButton:
-    button = QPushButton()
-    button.setIcon(icon)
-    button.setToolTip(tooltip)
-    button.setFixedSize(size, size)
-    button.setIconSize(QSize(size - 10, size - 10))
-    return button
-
-
-def _player_icon(kind: str, color: str = "#111827") -> QIcon:
-    size = 32
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor(color))
-    if kind == "play":
-        painter.drawPolygon(
-            QPolygonF(
-                [
-                    QPointF(12, 8),
-                    QPointF(12, 24),
-                    QPointF(24, 16),
-                ]
-            )
-        )
-    elif kind == "stop":
-        painter.drawRect(QRect(10, 10, 12, 12))
-    elif kind == "record":
-        painter.setBrush(QColor("#dc2626"))
-        painter.drawEllipse(QPointF(16, 16), 7, 7)
-    elif kind == "metronome":
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(QPen(QColor(color), 2))
-        painter.drawLine(10, 25, 16, 7)
-        painter.drawLine(22, 25, 16, 7)
-        painter.drawLine(10, 25, 22, 25)
-        painter.drawLine(16, 10, 20, 22)
-        painter.setBrush(QColor(color))
-        painter.drawEllipse(QPointF(20, 22), 2.5, 2.5)
-    elif kind == "speaker":
-        painter.drawRect(QRect(7, 13, 5, 7))
-        painter.drawPolygon(QPolygonF([QPointF(12, 13), QPointF(19, 8), QPointF(19, 25), QPointF(12, 20)]))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(QPen(QColor(color), 2))
-        painter.drawArc(QRect(18, 11, 8, 10), -45 * 16, 90 * 16)
-    painter.end()
-    return QIcon(pixmap)
-
-
-def _delete_recording_icon() -> QIcon:
-    size = 32
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(QPen(QColor("#4b5563"), 2))
-    painter.setBrush(QColor("#f3f4f6"))
-    eraser = QPolygonF(
-        [
-            QPointF(8, 21),
-            QPointF(18, 11),
-            QPointF(25, 18),
-            QPointF(15, 28),
-        ]
-    )
-    painter.drawPolygon(eraser)
-    painter.setBrush(QColor("#ffffff"))
-    painter.drawRect(QRect(12, 23, 12, 4))
-    painter.setPen(QPen(QColor("#dc2626"), 2))
-    painter.drawLine(21, 6, 28, 13)
-    painter.drawLine(28, 6, 21, 13)
-    painter.end()
-    return QIcon(pixmap)
-
-
-def _post_it_icon_rect(origin_x: int, origin_y: int, size: int) -> QRect:
-    return QRect(origin_x, origin_y, size, size)
-
-
-def _draw_post_it_icon(painter: QPainter, rect: QRect, has_memo: bool) -> None:
-    fill = QColor("#ef4444") if has_memo else QColor("#ffffff")
-    border = QColor("#991b1b") if has_memo else QColor("#c7ccd6")
-    fold = QColor("#fecaca") if has_memo else QColor("#eef2f7")
-    painter.save()
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(QPen(border, 1.1))
-    painter.setBrush(fill)
-    painter.drawRoundedRect(rect, 2, 2)
-    path = QPainterPath()
-    path.moveTo(rect.right() - rect.width() * 0.36, rect.top())
-    path.lineTo(rect.right(), rect.top())
-    path.lineTo(rect.right(), rect.top() + rect.height() * 0.36)
-    path.closeSubpath()
-    painter.setBrush(fold)
-    painter.drawPath(path)
-    painter.restore()
-
-
 def _mix_metronome_clicks_into_wav(path: Path, bpm: int, beats_per_bar: int) -> bool:
     if not path.exists():
         return False
@@ -2862,91 +2579,6 @@ class YouTubeTabPlayer(QObject):
         if end < start:
             start, end = end, start
         return start, end
-
-
-def _set_webengine_autoplay_allowed(settings, settings_class) -> None:
-    try:
-        settings.setAttribute(settings_class.WebAttribute.PlaybackRequiresUserGesture, False)
-    except Exception:
-        return
-
-
-def _make_youtube_view_non_interactive(view) -> None:
-    view.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-    view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-    view.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
-
-
-def _set_youtube_view_size(view) -> None:
-    view.setFixedSize(YOUTUBE_VIEW_WIDTH, YOUTUBE_VIEW_HEIGHT)
-
-
-def _youtube_player_url(origin: str, video_id: str) -> str:
-    return f"{origin.rstrip('/')}/youtube-player?video_id={quote(video_id, safe='')}"
-
-
-def _youtube_player_html(video_id: str, origin: str) -> str:
-    safe_video_id = json.dumps(video_id)
-    safe_origin = json.dumps(origin.rstrip("/"))
-    return f"""
-<!doctype html>
-<html>
-<head>
-<meta name="referrer" content="strict-origin-when-cross-origin">
-<style>
-html, body, #player {{ width: 100%; height: 100%; margin: 0; background: #111; overflow: hidden; }}
-</style>
-</head>
-<body>
-<div id="player"></div>
-<script src="https://www.youtube.com/iframe_api"></script>
-<script>
-const PLAYER_ORIGIN = {safe_origin};
-let player = null;
-let pending = null;
-function onYouTubeIframeAPIReady() {{
-  player = new YT.Player('player', {{
-    host: 'https://www.youtube-nocookie.com',
-    width: '100%',
-    height: '100%',
-    videoId: {safe_video_id},
-    playerVars: {{
-      enablejsapi: 1,
-      origin: PLAYER_ORIGIN,
-      widget_referrer: PLAYER_ORIGIN,
-      playsinline: 1,
-      rel: 0,
-      modestbranding: 1
-    }},
-    events: {{
-      onReady: function() {{ if (pending) {{ playAt(pending.seconds, pending.rate); pending = null; }} }},
-      onError: function(event) {{ document.body.dataset.youtubeError = String(event.data); }}
-    }}
-  }});
-}}
-function ready() {{ return player && player.seekTo && player.playVideo; }}
-function playAt(seconds, rate) {{
-  if (!ready()) {{ pending = {{ seconds: seconds, rate: rate }}; return; }}
-  try {{ player.setPlaybackRate(rate); }} catch (e) {{}}
-  player.seekTo(seconds, true);
-  player.playVideo();
-}}
-function seekToSeconds(seconds) {{
-  if (!ready()) return;
-  player.seekTo(seconds, true);
-}}
-function setRate(rate) {{
-  if (!ready()) return;
-  try {{ player.setPlaybackRate(rate); }} catch (e) {{}}
-}}
-function pauseVideo() {{
-  if (!ready()) return;
-  player.pauseVideo();
-}}
-</script>
-</body>
-</html>
-"""
 
 
 class MemoEditorWidget(QWidget):
@@ -5497,135 +5129,6 @@ class ChordPositionsWidget(QWidget):
             return "-"
         missing = [self._chord_position_degree_label(interval) for interval in position.missing_intervals]
         return ", ".join(missing) if missing else "없음"
-
-
-class _ChordFinderSearchParams(NamedTuple):
-    note_pcs: tuple[int, ...]
-    selected_positions: tuple[tuple[int, int], ...]
-    root_filter: int | None
-    type_filter: str | None
-    string_pitches: tuple[int, ...]
-    fret_count: int
-
-
-class _ChordFinderSearchResult(NamedTuple):
-    matches: tuple[ChordMatch, ...]
-    entries: tuple[tuple[ChordMatch, ChordPosition], ...]
-    match_count: int
-
-
-def _chord_finder_search_results(params: _ChordFinderSearchParams) -> _ChordFinderSearchResult:
-    note_pcs = params.note_pcs
-    selected_positions = params.selected_positions
-    if len(selected_positions) == 1:
-        return _ChordFinderSearchResult((), (), 0)
-
-    if note_pcs:
-        matches = find_chords_containing_pitches(
-            note_pcs,
-            root_pc=params.root_filter,
-            chord_type_suffix=params.type_filter,
-        )
-    elif params.root_filter is None or params.type_filter is None:
-        matches = ()
-    else:
-        matches = find_chords_by_filter(
-            root_pc=params.root_filter,
-            chord_type_suffix=params.type_filter,
-        )
-
-    if not matches or (note_pcs and not _selected_fret_span_can_fit(selected_positions)):
-        return _ChordFinderSearchResult((), (), 0)
-
-    entries: list[tuple[ChordMatch, ChordPosition]] = []
-    listed_matches: list[ChordMatch] = []
-    position_cache: dict[tuple[int, str, tuple[int, ...]], tuple[ChordPosition, ...]] = {}
-    positions_per_filter_chord = 20 if not note_pcs and params.root_filter is not None and params.type_filter is not None else 1
-
-    for match in matches:
-        positions = _positions_for_chord_finder_match(match, params, position_cache)
-        if note_pcs:
-            positions = tuple(position for position in positions if _position_contains_selected_frets(position, selected_positions))
-        if not positions:
-            continue
-        for position in positions[:positions_per_filter_chord]:
-            entries.append((match, position))
-            listed_matches.append(match)
-            if len(entries) >= MAX_CHORD_FINDER_RESULTS:
-                break
-        if len(entries) >= MAX_CHORD_FINDER_RESULTS:
-            break
-
-    return _ChordFinderSearchResult(tuple(listed_matches), tuple(entries), len(entries))
-
-
-def _positions_for_chord_finder_match(
-    match: ChordMatch,
-    params: _ChordFinderSearchParams,
-    position_cache: dict[tuple[int, str, tuple[int, ...]], tuple[ChordPosition, ...]],
-) -> tuple[ChordPosition, ...]:
-    key = (match.candidate.root_pc, match.chord_type.suffix, match.candidate.intervals)
-    if key not in position_cache:
-        positions = generate_chord_positions(
-            match.candidate,
-            params.string_pitches,
-            params.fret_count,
-            max_positions=MAX_CHORD_POSITIONS * len(CHORD_POSITION_CATEGORIES),
-        )
-        position_cache[key] = tuple(position for position in positions if _barre_open_strings_are_playable(position))
-    return position_cache[key]
-
-
-def _position_contains_selected_frets(position: ChordPosition, selected_positions: tuple[tuple[int, int], ...]) -> bool:
-    for string_index, fret in selected_positions:
-        if string_index < 0 or string_index >= len(position.frets_high_to_low):
-            return False
-        if position.frets_high_to_low[string_index] != fret:
-            return False
-    return True
-
-
-def _selected_fret_span_can_fit(selected_positions: tuple[tuple[int, int], ...]) -> bool:
-    fretted = [fret for _string_index, fret in selected_positions if fret > 0]
-    if not fretted:
-        return True
-    if 0 in [fret for _string_index, fret in selected_positions] and max(fretted) > MAX_FRET_SPAN - 1:
-        return False
-    return max(fretted) - min(fretted) <= MAX_FRET_SPAN - 1
-
-
-def _barre_open_strings_are_playable(position: ChordPosition) -> bool:
-    if position.barre_fret is None:
-        return True
-    barre_strings = [
-        string_index
-        for string_index, fret in enumerate(position.frets_high_to_low)
-        if fret == position.barre_fret
-    ]
-    if len(barre_strings) < 2:
-        return True
-    thinnest_barred_string = min(barre_strings)
-    return all(
-        fret != 0
-        for string_index, fret in enumerate(position.frets_high_to_low)
-        if string_index < thinnest_barred_string
-    )
-
-
-class _ChordFinderSearchWorker(QObject):
-    finished = pyqtSignal(int, object)
-    failed = pyqtSignal(int, str)
-
-    def __init__(self, token: int, params: _ChordFinderSearchParams) -> None:
-        super().__init__()
-        self.token = token
-        self.params = params
-
-    def run(self) -> None:
-        try:
-            self.finished.emit(self.token, _chord_finder_search_results(self.params))
-        except Exception as exc:  # noqa: BLE001 - background errors should not take down the UI.
-            self.failed.emit(self.token, str(exc))
 
 
 class ChordFinderWidget(QWidget):
