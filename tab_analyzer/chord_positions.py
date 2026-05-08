@@ -919,7 +919,7 @@ def _diagram_table(
     range_start, range_end = _display_fret_range(position)
     fret_headers = "".join(
         f'<td class="fret-head">{fret}</td>'
-        for fret in range(range_start, range_end + 1)
+        for fret in _visible_fret_labels(range_start, range_end)
     )
 
     rows: list[str] = [
@@ -930,11 +930,17 @@ def _diagram_table(
         status = _string_status_cell(position.frets_high_to_low[string_index])
         cells = [
             _fret_cell(position, candidate, string_pitches_high_to_low, string_index, fret, range_start)
-            for fret in range(range_start, range_end + 1)
+            for fret in _visible_fret_labels(range_start, range_end)
         ]
         rows.append(f'<tr><td class="string-label">{string_name}</td>{status}{"".join(cells)}</tr>')
 
     return f'<table class="diagram">{"".join(rows)}</table>'
+
+
+def _visible_fret_labels(range_start: int, range_end: int) -> range:
+    if range_start == 0:
+        return range(1, range_end + 2)
+    return range(range_start, range_end + 1)
 
 
 def _string_status_cell(fret: int) -> str:

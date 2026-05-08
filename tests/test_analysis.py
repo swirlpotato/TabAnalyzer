@@ -18,16 +18,15 @@ class AnalysisTests(unittest.TestCase):
         analysis = analyze_pitch_classes([0, 4, 7, 0])
         self.assertEqual(analysis.chord_candidates[0].name, "C")
 
-    def test_common_jazz_and_symmetric_scales_are_available(self):
+    def test_intermediate_guitar_scales_are_available(self):
         cases = {
-            "C lydian dominant": [0, 2, 4, 6, 7, 9, 10],
-            "C altered": [0, 1, 3, 4, 6, 8, 10],
-            "C whole tone": [0, 2, 4, 6, 8, 10],
-            "C double harmonic": [0, 1, 4, 5, 7, 8, 11],
-            "C neapolitan minor": [0, 1, 3, 5, 7, 8, 11],
-            "C persian": [0, 1, 4, 5, 6, 8, 11],
-            "C prometheus": [0, 2, 4, 6, 9, 10],
-            "C insen": [0, 1, 5, 7, 10],
+            "C mixolydian": [0, 2, 4, 5, 7, 9, 10],
+            "C harmonic minor": [0, 2, 3, 5, 7, 8, 11],
+            "C melodic minor": [0, 2, 3, 5, 7, 9, 11],
+            "C phrygian dominant": [0, 1, 4, 5, 7, 8, 10],
+            "C major pentatonic": [0, 2, 4, 7, 9],
+            "C minor pentatonic": [0, 3, 5, 7, 10],
+            "C blues": [0, 3, 5, 6, 7, 10],
         }
 
         for expected_name, pitch_classes in cases.items():
@@ -36,15 +35,22 @@ class AnalysisTests(unittest.TestCase):
                 names = [candidate.name for candidate in analysis.scale_candidates[:12]]
                 self.assertIn(expected_name, names)
 
-    def test_extended_and_altered_chords_are_available(self):
+    def test_advanced_scale_names_are_not_ranked(self):
+        analysis = analyze_pitch_classes([0, 1, 3, 4, 6, 8, 10], top_n=12)
+        names = [candidate.name for candidate in analysis.scale_candidates[:12]]
+
+        self.assertNotIn("C altered", names)
+        self.assertNotIn("C diminished half-whole", names)
+        self.assertNotIn("C double harmonic", names)
+
+    def test_intermediate_chords_are_available(self):
         cases = {
             "Cmaj9": [0, 4, 7, 11, 2],
-            "C7b9": [0, 4, 7, 10, 1],
+            "C6/9": [0, 4, 7, 9, 2],
             "C9sus4": [0, 5, 7, 10, 2],
-            "C13#11": [0, 4, 7, 10, 2, 6, 9],
-            "C7b9b13": [0, 4, 7, 10, 1, 8],
-            "Cm9b5": [0, 3, 6, 10, 2],
-            "C7sus4b9": [0, 5, 7, 10, 1],
+            "Cm7b5": [0, 3, 6, 10],
+            "Cdim7": [0, 3, 6, 9],
+            "C7sus4": [0, 5, 7, 10],
         }
 
         for expected_name, pitch_classes in cases.items():
@@ -52,6 +58,14 @@ class AnalysisTests(unittest.TestCase):
                 analysis = analyze_pitch_classes(pitch_classes, top_n=12)
                 names = [candidate.name for candidate in analysis.chord_candidates[:12]]
                 self.assertIn(expected_name, names)
+
+    def test_advanced_chord_names_are_not_ranked(self):
+        analysis = analyze_pitch_classes([0, 4, 7, 10, 1, 8], top_n=12)
+        names = [candidate.name for candidate in analysis.chord_candidates[:12]]
+
+        self.assertNotIn("C7b9", names)
+        self.assertNotIn("C13#11", names)
+        self.assertNotIn("C7b9b13", names)
 
     def test_global_context_biases_short_measure_scale(self):
         context = Candidate(

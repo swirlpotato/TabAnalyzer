@@ -9,11 +9,13 @@ from PyQt6.QtCore import QPointF, QRect, Qt
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPen, QShortcut
 from PyQt6.QtWidgets import QApplication
 
+from tab_analyzer.i18n import tr
 from tab_analyzer.scale_blocks import ScaleBlock
-from tab_analyzer.ui import ChordFinderWidget, FretboardWidget, TabPlaybackPanel, TabScoreWidget, _MeasureLayout
+from tab_analyzer.ui import ABOUT_URL, ChordFinderWidget, FretboardWidget, TabPlaybackPanel, TabScoreWidget, _MeasureLayout
+from tab_analyzer.ui import _about_html, _open_external_url
 from tab_analyzer.ui import _ChordFinderSearchParams, _chord_finder_search_results
 from tab_analyzer.ui import YOUTUBE_VIEW_HEIGHT, YOUTUBE_VIEW_PIP_MARGIN, YOUTUBE_VIEW_WIDTH
-from tests.helpers import STANDARD_TUNING, beat, measure, song_with_measures, tab_note
+from tests.helpers import C_MAJOR, STANDARD_TUNING, beat, measure, song_with_measures, tab_note
 
 
 class FakeMetronome:
@@ -66,6 +68,22 @@ class FakePipView:
 
     def page(self) -> FakeWebPage:
         return self._page
+
+
+class AboutDialogTests(unittest.TestCase):
+    def test_about_html_turns_project_url_into_link(self):
+        rendered = _about_html("1.2.3", ABOUT_URL)
+
+        self.assertIn("1.2.3", rendered)
+        self.assertIn(f'href="{ABOUT_URL}"', rendered)
+        self.assertIn(f">{ABOUT_URL}</a>", rendered)
+
+    def test_open_external_url_uses_qdesktopservices(self):
+        with patch("tab_analyzer.ui.QDesktopServices.openUrl", return_value=True) as open_url:
+            self.assertTrue(_open_external_url(ABOUT_URL))
+
+        target = open_url.call_args.args[0]
+        self.assertEqual(target.toString(), ABOUT_URL)
 
 
 class FakeTechniquePainter:
@@ -319,6 +337,28 @@ class TabScoreLayoutTests(unittest.TestCase):
 
         self.assertEqual(widget._active_scale_block_index(blocks), 0)
 
+    def test_fretboard_tracks_current_playback_notes(self):
+        widget = FretboardWidget()
+        measure_data = measure(
+            1,
+            (
+                beat(0, (tab_note(1, 5, 0),)),
+                beat(480, (tab_note(2, 7, 480),)),
+            ),
+            scales=(C_MAJOR,),
+        )
+        widget.set_song(song_with_measures((measure_data,)))
+        widget.set_selection(measure_data, C_MAJOR, "scale")
+
+        widget.set_playback_tick(100)
+        self.assertEqual([note.fret for note in widget._current_playback_notes()], [5])
+
+        widget.set_playback_tick(600)
+        self.assertEqual([note.fret for note in widget._current_playback_notes()], [7])
+
+        widget.set_playback_tick(None)
+        self.assertEqual(widget._current_playback_notes(), ())
+
     def test_bend_symbol_uses_half_size_arrow_shape(self):
         widget = TabScoreWidget()
         widget.zoom = 1.0
@@ -397,11 +437,20 @@ class TabScoreLayoutTests(unittest.TestCase):
         self.assertFalse(widget._searching)
         self.assertEqual(started, [])
 
+    def test_chord_finder_open_position_has_no_zero_fret_cell(self):
+        widget = ChordFinderWidget()
+        board = QRect(100, 20, 80, 40)
+        fret_gap = board.width() / 4
+
+        self.assertEqual(list(widget._match_visible_fret_labels(0, 3)), [1, 2, 3, 4])
+        self.assertEqual(widget._match_fret_center_x(board, fret_gap, 0, 0), 100)
+        self.assertEqual(widget._match_fret_center_x(board, fret_gap, 1, 0), 110)
+
     def test_tab_playback_defaults_to_youtube_when_available(self):
         panel = TabPlaybackPanel()
         try:
             panel.youtube_player.available = True
-            panel.youtube_player._load_video = lambda _video_id: None
+            panel.youtube_player._load_video = lambda _video_id, _status_message="": None
             song = song_with_measures((measure(1, (beat(0, (tab_note(1, 5, 0),)),)),))
 
             with patch(
@@ -420,7 +469,7 @@ class TabScoreLayoutTests(unittest.TestCase):
         panel = TabPlaybackPanel()
         try:
             panel.youtube_player.available = True
-            panel.youtube_player._load_video = lambda _video_id: None
+            panel.youtube_player._load_video = lambda _video_id, _status_message="": None
             song = song_with_measures((measure(1, (beat(0, (tab_note(1, 5, 0),)),)),))
             with patch(
                 "tab_analyzer.ui.load_details_file",
@@ -437,6 +486,104 @@ class TabScoreLayoutTests(unittest.TestCase):
         finally:
             panel.shutdown()
 
+    def test_youtube_embed_error_switches_to_next_video_candidate(self):
+        panel = TabPlaybackPanel()
+        loaded: list[str] = []
+        try:
+            panel.youtube_player.available = True
+            panel.youtube_player.playback_available = True
+            panel.youtube_player.video_id = "bad"
+            panel.youtube_player._loaded_video_id = "bad"
+            panel.youtube_player._video_candidates = ["bad", "good"]
+            panel.youtube_player._load_video = lambda video_id, _status_message="": loaded.append(video_id) or False
+
+            panel.youtube_player._handle_youtube_error("150")
+
+            self.assertEqual(panel.youtube_player.video_id, "good")
+            self.assertEqual(loaded, ["good"])
+            self.assertTrue(panel.youtube_player.playback_available)
+            self.assertTrue(panel.youtube_radio.isEnabled())
+            self.assertEqual(panel.youtube_status_label.text(), tr("YouTube OK - {video_id}").format(video_id="good"))
+        finally:
+            panel.shutdown()
+
+    def test_youtube_embed_error_disables_youtube_when_no_candidates_remain(self):
+        panel = TabPlaybackPanel()
+        try:
+            panel.youtube_player.available = True
+            panel.youtube_player.playback_available = True
+            panel.youtube_player.video_id = "bad"
+            panel.youtube_player._loaded_video_id = "bad"
+            panel.youtube_player._video_candidates = ["bad"]
+            panel.youtube_radio.setEnabled(True)
+            panel.youtube_radio.setChecked(True)
+
+            panel.youtube_player._handle_youtube_error("150")
+
+            self.assertFalse(panel.youtube_player.playback_available)
+            self.assertFalse(panel.youtube_radio.isEnabled())
+            self.assertTrue(panel.midi_radio.isChecked())
+            self.assertEqual(panel.youtube_status_label.text(), tr("YouTube unavailable"))
+        finally:
+            panel.shutdown()
+
+    def test_youtube_ready_promotes_successful_video_in_details_file(self):
+        panel = TabPlaybackPanel()
+        try:
+            panel.song = song_with_measures((measure(1, (beat(0, (tab_note(1, 5, 0),)),)),))
+            panel.details = {
+                "youtube": {
+                    "default_video_id": "bad",
+                    "videos": [
+                        {"video_id": "bad", "url": "https://www.youtube.com/watch?v=bad"},
+                        {"video_id": "good", "url": "https://www.youtube.com/watch?v=good"},
+                    ],
+                }
+            }
+
+            with patch("tab_analyzer.ui.save_details_file") as save_details:
+                panel._on_youtube_video_ready("good")
+
+            self.assertEqual(panel.details["youtube"]["default_video_id"], "good")
+            self.assertEqual([video["video_id"] for video in panel.details["youtube"]["videos"]], ["good", "bad"])
+            save_details.assert_called_once_with(panel.song.path, panel.details)
+        finally:
+            panel.shutdown()
+
+    def test_youtube_sync_control_updates_player_and_details_file(self):
+        panel = TabPlaybackPanel()
+        offsets: list[int] = []
+        try:
+            panel.song = song_with_measures((measure(1, (beat(0, (tab_note(1, 5, 0),)),)),))
+            panel.details = {"youtube": {"default_video_id": "abc123", "sync": {"offset_seconds": 0.0}}}
+            panel.youtube_player.set_offset_milliseconds = offsets.append  # type: ignore[method-assign]
+
+            with patch("tab_analyzer.ui.save_details_file") as save_details:
+                panel.youtube_sync_spin.setValue(10)
+
+            self.assertEqual(offsets[-1], 10)
+            self.assertEqual(panel.details["youtube"]["sync"]["offset_seconds"], 0.01)
+            save_details.assert_called_once_with(panel.song.path, panel.details)
+        finally:
+            panel.shutdown()
+
+    def test_speed_buttons_adjust_and_reset_speed(self):
+        panel = TabPlaybackPanel()
+        try:
+            panel.speed_slider.setValue(100)
+
+            panel.speed_up_button.click()
+            self.assertEqual(panel.speed_slider.value(), 101)
+
+            panel.speed_down_button.click()
+            self.assertEqual(panel.speed_slider.value(), 100)
+
+            panel.speed_slider.setValue(137)
+            panel.speed_reset_button.click()
+            self.assertEqual(panel.speed_slider.value(), 100)
+        finally:
+            panel.shutdown()
+
     def test_tab_playback_emits_measure_changes_during_playback(self):
         panel = TabPlaybackPanel()
         try:
@@ -449,13 +596,16 @@ class TabScoreLayoutTests(unittest.TestCase):
             panel.song = song
             panel.score.set_song(song)
             changed: list[int] = []
+            ticks: list[object] = []
             panel.playbackMeasureChanged.connect(changed.append)
+            panel.playbackTickChanged.connect(ticks.append)
 
             panel._on_playback_position_changed(song.track.measures[0].start_tick)
             panel._on_playback_position_changed(song.track.measures[0].start_tick + 480)
             panel._on_playback_position_changed(song.track.measures[1].start_tick)
 
             self.assertEqual(changed, [0, 1])
+            self.assertEqual(ticks, [song.track.measures[0].start_tick, song.track.measures[0].start_tick + 480, song.track.measures[1].start_tick])
         finally:
             panel.shutdown()
 

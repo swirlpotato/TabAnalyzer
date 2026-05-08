@@ -8,6 +8,8 @@ import locale
 from pathlib import Path
 from typing import Iterable
 
+from .analysis import SCALE_PATTERNS
+
 
 LOCALE_DIR = Path(__file__).resolve().parent.parent / "locales"
 DEFAULT_LANGUAGE = "en"
@@ -91,6 +93,8 @@ CHORD_NAME_TERMS = frozenset(
         "sus4",
     }
 )
+SCALE_NAME_TERMS = frozenset({name for name, _intervals in SCALE_PATTERNS} | {"minor (natural minor)"})
+MUSIC_NAME_TERMS = CHORD_NAME_TERMS | SCALE_NAME_TERMS | {"Open"}
 
 
 def _available_languages() -> tuple[str, ...]:
@@ -119,7 +123,7 @@ def current_language() -> str:
 
 
 def tr(text: str, language: str | None = None) -> str:
-    if text in CHORD_NAME_TERMS:
+    if text in MUSIC_NAME_TERMS:
         return text
     return _language_map(language or current_language()).get(text, text)
 

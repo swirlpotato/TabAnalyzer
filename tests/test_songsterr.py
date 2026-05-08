@@ -12,7 +12,10 @@ from tab_analyzer.songsterr import (
     _youtube_videos,
     details_path_for_gp,
     load_cookie_header,
+    save_details_file,
     save_cookie_header,
+    update_youtube_default_video,
+    update_youtube_sync_offset,
 )
 
 
@@ -70,6 +73,41 @@ class SongsterrParsingTests(unittest.TestCase):
 
     def test_details_path_uses_gp_filename_stem(self):
         self.assertEqual(details_path_for_gp(Path("Queen-Bohemian.gp")).name, "Queen-Bohemian_details.json")
+
+    def test_details_file_can_be_saved(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            gp_path = Path(temp_dir) / "Song.gp"
+
+            details_path = save_details_file(gp_path, {"youtube": {"default_video_id": "abc"}})
+
+            self.assertEqual(details_path, Path(temp_dir) / "Song_details.json")
+            self.assertEqual(details_path.read_text(encoding="utf-8"), '{\n  "youtube": {\n    "default_video_id": "abc"\n  }\n}')
+
+    def test_promotes_successful_youtube_video_to_default(self):
+        details = {
+            "youtube": {
+                "default_video_id": "bad",
+                "videos": [
+                    {"video_id": "bad", "url": "https://www.youtube.com/watch?v=bad"},
+                    {"video_id": "good", "url": "https://www.youtube.com/watch?v=good"},
+                ],
+            }
+        }
+
+        changed = update_youtube_default_video(details, "good")
+
+        self.assertTrue(changed)
+        self.assertEqual(details["youtube"]["default_video_id"], "good")
+        self.assertEqual(details["youtube"]["default_video_url"], "https://www.youtube.com/watch?v=good")
+        self.assertEqual([video["video_id"] for video in details["youtube"]["videos"]], ["good", "bad"])
+
+    def test_updates_youtube_sync_offset(self):
+        details = {"youtube": {"sync": {"offset_seconds": 0.0}}}
+
+        changed = update_youtube_sync_offset(details, 0.01)
+
+        self.assertTrue(changed)
+        self.assertEqual(details["youtube"]["sync"]["offset_seconds"], 0.01)
 
     def test_songsterr_details_include_youtube_videos(self):
         meta = {

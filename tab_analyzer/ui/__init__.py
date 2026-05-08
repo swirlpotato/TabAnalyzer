@@ -23,7 +23,7 @@ from typing import Iterable, NamedTuple
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from PyQt6.QtCore import QElapsedTimer, QEvent, QObject, QPoint, QPointF, QRect, QSize, QThread, Qt, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QFont, QFontMetrics, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QPolygonF, QShortcut
+from PyQt6.QtGui import QAction, QColor, QDesktopServices, QFont, QFontMetrics, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QPolygonF, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -123,8 +123,11 @@ from ..songsterr import (
     download_guitar_pro,
     load_details_file,
     load_cookie_header,
+    save_details_file,
     save_cookie_header,
     search_tabs,
+    update_youtube_default_video,
+    update_youtube_sync_offset,
 )
 from ..theory import TheoryExplainer
 from ..tunings import TuningPreset, load_tuning_presets
@@ -156,6 +159,7 @@ from .youtube import (
     _set_youtube_view_size,
     _youtube_player_html,
     _youtube_player_url,
+    _youtube_video_candidates,
 )
 
 
@@ -163,10 +167,24 @@ PROJECT_ROOT_PATH = Path(__file__).resolve().parent.parent.parent
 SONGSTERR_DOWNLOAD_DIR = PROJECT_ROOT_PATH / "Downloads"
 RECENT_FILES_PATH = COOKIE_STORE_PATH.with_name("recent_files.json")
 MAX_RECENT_FILES = 10
+ABOUT_URL = "https://github.com/swirlpotato/TabAnalyzer"
 
 
 def _trf(template: str, **values: object) -> str:
     return tr(template).format(**values)
+
+
+def _about_html(version: str, url: str = ABOUT_URL) -> str:
+    text = _trf("Tab Analyzer\n\nVersion: {version}\n{url}", version=version, url=url)
+    escaped_text = html.escape(text).replace("\n", "<br>")
+    escaped_url = html.escape(url)
+    link = f'<a href="{html.escape(url, quote=True)}">{escaped_url}</a>'
+    return f'<div style="font-size: 12pt;">{escaped_text.replace(escaped_url, link)}</div>'
+
+
+def _open_external_url(url: QUrl | str) -> bool:
+    target = url if isinstance(url, QUrl) else QUrl(str(url))
+    return QDesktopServices.openUrl(target)
 
 
 MAX_DISPLAY_CANDIDATES = 12
@@ -203,54 +221,18 @@ SCALE_POSITION_ROOT_OPTIONS = (
 SCALE_POSITION_ORDER = (
     "major",
     "natural minor",
-    "major pentatonic",
-    "minor pentatonic",
-    "blues",
-    "major blues",
     "dorian",
-    "mixolydian",
     "phrygian",
     "lydian",
+    "mixolydian",
     "locrian",
     "harmonic minor",
     "melodic minor",
     "phrygian dominant",
-    "lydian dominant",
-    "altered",
-    "diminished half-whole",
-    "diminished whole-half",
-    "whole tone",
-    "bebop dominant",
-    "major bebop",
-    "harmonic major",
-    "double harmonic",
-    "hungarian minor",
-    "gypsy",
-    "dorian b2",
-    "locrian #2",
-    "lydian augmented",
-    "mixolydian b6",
-    "locrian natural 6",
-    "dorian #4",
-    "lydian #2",
-    "altered diminished",
-    "ionian augmented",
-    "dorian b5",
-    "phrygian b4",
-    "lydian diminished",
-    "mixolydian b2",
-    "augmented",
-    "suspended pentatonic",
-    "yo pentatonic",
-    "hirajoshi",
-    "in",
-    "insen",
-    "iwato",
-    "neapolitan major",
-    "neapolitan minor",
-    "persian",
-    "enigmatic",
-    "ukrainian dorian",
+    "major pentatonic",
+    "minor pentatonic",
+    "blues",
+    "major blues",
 )
 
 SCALE_POSITION_PATTERN_BY_NAME = dict(SCALE_PATTERNS)
@@ -2364,6 +2346,7 @@ class YouTubeTabPlayer(QObject):
     playingChanged = pyqtSignal(bool)
     finished = pyqtSignal()
     availabilityChanged = pyqtSignal(bool)
+    videoReady = pyqtSignal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -2374,10 +2357,16 @@ class YouTubeTabPlayer(QObject):
         self._html_server_thread: Thread | None = None
         self._html_origin = ""
         self.available = False
+        self.playback_available = False
         self.error = ""
         self.details: dict = {}
         self.video_id = ""
+        self._video_candidates: list[str] = []
+        self._failed_video_ids: set[str] = set()
         self._loaded_video_id = ""
+        self._loading_video = False
+        self._pending_player_script = ""
+        self._ready_video_id = ""
         self.offset_seconds = 0.0
         self.song: SongData | None = None
         self.start_tick = 0
@@ -2389,26 +2378,40 @@ class YouTubeTabPlayer(QObject):
         self.timer = QTimer(self)
         self.timer.setInterval(40)
         self.timer.timeout.connect(self._tick)
+        self.error_timer = QTimer(self)
+        self.error_timer.setInterval(750)
+        self.error_timer.timeout.connect(self._poll_youtube_error)
         self.clock = QElapsedTimer()
         self._load_web_engine()
 
     def set_details(self, details: dict | None) -> None:
         self.details = details if isinstance(details, dict) else {}
+        self._failed_video_ids.clear()
+        self._pending_player_script = ""
+        self._loading_video = False
+        self._loaded_video_id = ""
+        self._ready_video_id = ""
+        self.error_timer.stop()
+        self.error = ""
         youtube = self.details.get("youtube") if isinstance(self.details, dict) else None
         if not isinstance(youtube, dict):
             self.video_id = ""
+            self._video_candidates = []
+            self.playback_available = False
             self.offset_seconds = 0.0
             self.availabilityChanged.emit(False)
             return
-        self.video_id = str(youtube.get("default_video_id") or "").strip()
+        self._video_candidates = _youtube_video_candidates(youtube)
+        self.video_id = self._video_candidates[0] if self._video_candidates else ""
         sync = youtube.get("sync")
         try:
             self.offset_seconds = float(sync.get("offset_seconds", 0.0)) if isinstance(sync, dict) else 0.0
         except (TypeError, ValueError):
             self.offset_seconds = 0.0
-        if self.video_id and self.available:
+        self.playback_available = bool(self.video_id and self.available)
+        if self.playback_available:
             self._load_video(self.video_id)
-        self.availabilityChanged.emit(bool(self.video_id and self.available))
+        self.availabilityChanged.emit(self.playback_available)
 
     def start(
         self,
@@ -2421,7 +2424,7 @@ class YouTubeTabPlayer(QObject):
         play_from_measure_index: int | None = None,
         play_from_tick: int | None = None,
     ) -> None:
-        if not self.available or not self.video_id or not song.track.measures:
+        if not self.playback_available or not self.video_id or not song.track.measures:
             return
         self.stop(emit=False)
         start_measure_index, end_measure_index = self._clamp_range(start_measure_index, end_measure_index, len(song.track.measures))
@@ -2432,8 +2435,12 @@ class YouTubeTabPlayer(QObject):
         self.start_tick = measures[0].start_tick
         self.end_tick = measures[-1].start_tick + measures[-1].length_ticks
         self.current_tick = float(self._play_from_tick(song, start_measure_index, end_measure_index, play_from_measure_index, play_from_tick))
-        self._load_video(self.video_id)
-        self._run_js(f"playAt({self._tick_to_seconds(self.current_tick):.3f}, {self.speed_percent / 100.0:.3f});")
+        loaded = self._load_video(self.video_id)
+        self._run_or_queue_js(
+            f"playAt({self._tick_to_seconds(self.current_tick):.3f}, {self.speed_percent / 100.0:.3f});",
+            defer=loaded,
+        )
+        self._start_youtube_error_poll()
         self.clock.start()
         self.timer.start()
         self.playing = True
@@ -2442,6 +2449,7 @@ class YouTubeTabPlayer(QObject):
 
     def stop(self, emit: bool = True) -> None:
         self.timer.stop()
+        self._pending_player_script = ""
         self._run_js("pauseVideo();")
         was_playing = self.playing
         self.playing = False
@@ -2454,8 +2462,14 @@ class YouTubeTabPlayer(QObject):
         if self.playing:
             self._run_js(f"setRate({self.speed_percent / 100.0:.3f});")
 
+    def set_offset_milliseconds(self, value: int) -> None:
+        self.offset_seconds = int(value) / 1000.0
+        if self.playing:
+            self._run_js(f"seekToSeconds({self._tick_to_seconds(self.current_tick):.3f});")
+
     def close(self) -> None:
         self.stop(emit=False)
+        self.error_timer.stop()
         if self._html_server is not None:
             self._html_server.shutdown()
             self._html_server.server_close()
@@ -2495,6 +2509,7 @@ class YouTubeTabPlayer(QObject):
         _set_webengine_autoplay_allowed(self._web_profile.settings(), QWebEngineSettings)
         self.view = QWebEngineView(self.parent_widget)
         self.view.setPage(QWebEnginePage(self._web_profile, self.view))
+        self.view.loadFinished.connect(self._on_youtube_load_finished)
         _set_webengine_autoplay_allowed(self.view.settings(), QWebEngineSettings)
         _set_webengine_autoplay_allowed(self.view.page().settings(), QWebEngineSettings)
         _make_youtube_view_non_interactive(self.view)
@@ -2502,16 +2517,20 @@ class YouTubeTabPlayer(QObject):
         self.view.hide()
         self.available = True
 
-    def _load_video(self, video_id: str) -> None:
+    def _load_video(self, video_id: str, status_message: str = "") -> bool:
         if self.view is None:
-            return
+            return False
         if self._loaded_video_id == video_id:
-            return
+            return False
         origin = self._ensure_html_server()
         if not origin:
-            return
-        self.view.load(QUrl(_youtube_player_url(origin, video_id)))
+            return False
+        self._loading_video = True
+        self._ready_video_id = ""
+        self.view.load(QUrl(_youtube_player_url(origin, video_id, status_message)))
         self._loaded_video_id = video_id
+        self._start_youtube_error_poll()
+        return True
 
     def _ensure_html_server(self) -> str:
         if self._html_server is not None and self._html_origin:
@@ -2529,7 +2548,8 @@ class YouTubeTabPlayer(QObject):
                 if not video_id:
                     self.send_error(HTTPStatus.BAD_REQUEST)
                     return
-                payload = _youtube_player_html(video_id, origin_holder["origin"]).encode("utf-8")
+                status_message = (parse_qs(parsed.query).get("status") or [""])[0].strip()
+                payload = _youtube_player_html(video_id, origin_holder["origin"], status_message).encode("utf-8")
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")
@@ -2553,10 +2573,119 @@ class YouTubeTabPlayer(QObject):
         self._html_server_thread.start()
         return self._html_origin
 
+    def _on_youtube_load_finished(self, ok: bool) -> None:
+        self._loading_video = False
+        if not ok:
+            self.error = "YouTube player page could not be loaded."
+            self.playback_available = False
+            self.availabilityChanged.emit(False)
+            return
+        if self._pending_player_script:
+            script = self._pending_player_script
+            self._pending_player_script = ""
+            self._run_js(script)
+        self._start_youtube_error_poll()
+
+    def _start_youtube_error_poll(self) -> None:
+        if self.view is None or not self.video_id:
+            return
+        if not self.error_timer.isActive():
+            self.error_timer.start()
+
+    def _poll_youtube_error(self) -> None:
+        if self.view is None or not self.video_id:
+            self.error_timer.stop()
+            return
+        self._run_js_result(
+            "({"
+            "error: document.body ? (document.body.dataset.youtubeError || '') : '', "
+            "ready: document.body ? (document.body.dataset.youtubeReady || '') : '', "
+            "videoId: document.body ? (document.body.dataset.youtubeErrorVideoId || document.body.dataset.youtubeVideoId || '') : ''"
+            "})",
+            self._on_youtube_player_state,
+        )
+
+    def _on_youtube_player_state(self, state: object) -> None:
+        if not isinstance(state, dict):
+            return
+        state_video_id = str(state.get("videoId") or "").strip()
+        if state_video_id and state_video_id != self._loaded_video_id:
+            return
+        error_code = str(state.get("error") or "").strip()
+        if error_code:
+            self._handle_youtube_error(error_code)
+            return
+        if str(state.get("ready") or "").strip() == "1":
+            self._handle_youtube_ready(state_video_id or self._loaded_video_id)
+
+    def _handle_youtube_ready(self, video_id: str) -> None:
+        video_id = str(video_id or "").strip()
+        if not video_id or self._ready_video_id == video_id:
+            return
+        self._ready_video_id = video_id
+        self.error = ""
+        self.videoReady.emit(video_id)
+
+    def _handle_youtube_error(self, error_code: str) -> None:
+        failed_video_id = self._loaded_video_id or self.video_id
+        if failed_video_id:
+            self._failed_video_ids.add(failed_video_id)
+        self.error = f"YouTube error {error_code}"
+        next_video_id = self._next_video_candidate()
+        if next_video_id:
+            self.video_id = next_video_id
+            self.playback_available = True
+            loaded = self._load_video(next_video_id, tr("Changing to another video."))
+            if self.playing:
+                self._run_or_queue_js(
+                    f"playAt({self._tick_to_seconds(self.current_tick):.3f}, {self.speed_percent / 100.0:.3f});",
+                    defer=loaded,
+                )
+            self.availabilityChanged.emit(True)
+            return
+
+        self.error_timer.stop()
+        self.playback_available = False
+        self._set_youtube_message(tr("No replacement video is available."))
+        was_playing = self.playing
+        self.stop(emit=False)
+        self.availabilityChanged.emit(False)
+        if was_playing:
+            self.playingChanged.emit(False)
+            self.finished.emit()
+
+    def _next_video_candidate(self) -> str:
+        for candidate in self._video_candidates:
+            if candidate not in self._failed_video_ids:
+                return candidate
+        return ""
+
+    def _run_or_queue_js(self, script: str, *, defer: bool) -> None:
+        if defer or self._loading_video:
+            self._pending_player_script = script
+            return
+        self._run_js(script)
+
+    def _set_youtube_message(self, message: str) -> None:
+        self._run_js(f"setStatus({json.dumps(message)});")
+
     def _run_js(self, script: str) -> None:
         if self.view is None:
             return
-        self.view.page().runJavaScript(script)
+        try:
+            self.view.page().runJavaScript(script)
+        except RuntimeError:
+            return
+
+    def _run_js_result(self, script: str, callback) -> None:
+        if self.view is None:
+            return
+        try:
+            self.view.page().runJavaScript(script, callback)
+        except TypeError:
+            self.error_timer.stop()
+        except RuntimeError:
+            return
 
     def _tick_to_seconds(self, tick: float) -> float:
         if self.song is None:
@@ -2685,6 +2814,7 @@ class RecordingListRow(QWidget):
 class TabPlaybackPanel(QWidget):
     selectionChanged = pyqtSignal(int, int)
     playbackMeasureChanged = pyqtSignal(int)
+    playbackTickChanged = pyqtSignal(object)
     zoomWheelRequested = pyqtSignal(int)
 
     def __init__(self) -> None:
@@ -2697,6 +2827,8 @@ class TabPlaybackPanel(QWidget):
         self._midi_warning_shown = False
         self._mix_click_after_recording = False
         self._playback_measure_index: int | None = None
+        self._syncing_youtube_sync_spin = False
+        self.details: dict = {}
 
         self.player = TabMidiPlayer()
         self.youtube_player = YouTubeTabPlayer(self)
@@ -2715,6 +2847,12 @@ class TabPlaybackPanel(QWidget):
         self.repeat_end_spin = QSpinBox()
         self.speed_slider = QSlider(Qt.Orientation.Horizontal)
         self.speed_label = QLabel("100%")
+        self.speed_down_button = QPushButton("-")
+        self.speed_reset_button = QPushButton("100%")
+        self.speed_up_button = QPushButton("+")
+        self.youtube_sync_spin = QSpinBox()
+        self.youtube_sync_down_button = QPushButton("-")
+        self.youtube_sync_up_button = QPushButton("+")
         self.record_metronome_check = QCheckBox("Record click")
         self.metronome_button = _icon_button(_player_icon("metronome"), "Metronome F9")
         self.record_button = _icon_button(_player_icon("record"), "Record F10")
@@ -2747,7 +2885,14 @@ class TabPlaybackPanel(QWidget):
         self.youtube_player.positionChanged.connect(self._on_playback_position_changed)
         self.youtube_player.playingChanged.connect(self._on_playing_changed)
         self.youtube_player.availabilityChanged.connect(self._on_youtube_availability_changed)
+        self.youtube_player.videoReady.connect(self._on_youtube_video_ready)
         self.midi_radio.toggled.connect(self._on_playback_source_changed)
+        self.speed_down_button.clicked.connect(lambda: self._adjust_speed(-1))
+        self.speed_reset_button.clicked.connect(lambda: self.speed_slider.setValue(100))
+        self.speed_up_button.clicked.connect(lambda: self._adjust_speed(1))
+        self.youtube_sync_down_button.clicked.connect(lambda: self._adjust_youtube_sync(-10))
+        self.youtube_sync_up_button.clicked.connect(lambda: self._adjust_youtube_sync(10))
+        self.youtube_sync_spin.valueChanged.connect(self._on_youtube_sync_changed)
         self.metronome_button.clicked.connect(self._toggle_practice_metronome)
         self.record_button.clicked.connect(self._start_recording)
         self.record_stop_button.clicked.connect(self._stop_recording)
@@ -2779,6 +2924,17 @@ class TabPlaybackPanel(QWidget):
         self.midi_radio.setChecked(True)
         controls.addWidget(self.youtube_radio)
         controls.addWidget(self.midi_radio)
+        controls.addWidget(QLabel("Sync"))
+        for button in (self.youtube_sync_down_button, self.youtube_sync_up_button):
+            button.setFixedSize(26, 26)
+        self.youtube_sync_spin.setRange(-300000, 300000)
+        self.youtube_sync_spin.setSingleStep(10)
+        self.youtube_sync_spin.setSuffix(" ms")
+        self.youtube_sync_spin.setKeyboardTracking(False)
+        self.youtube_sync_spin.setFixedWidth(88)
+        controls.addWidget(self.youtube_sync_down_button)
+        controls.addWidget(self.youtube_sync_spin)
+        controls.addWidget(self.youtube_sync_up_button)
         controls.addWidget(self.repeat_check)
         controls.addWidget(QLabel("Start"))
         self.repeat_start_spin.setRange(1, 1)
@@ -2794,7 +2950,13 @@ class TabPlaybackPanel(QWidget):
         self.speed_slider.setRange(50, 200)
         self.speed_slider.setValue(100)
         self.speed_slider.setFixedWidth(130)
+        for button in (self.speed_down_button, self.speed_up_button):
+            button.setFixedSize(26, 26)
+        self.speed_reset_button.setFixedWidth(48)
+        controls.addWidget(self.speed_down_button)
         controls.addWidget(self.speed_slider)
+        controls.addWidget(self.speed_up_button)
+        controls.addWidget(self.speed_reset_button)
         controls.addWidget(self.speed_label)
         controls.addStretch(1)
         self.midi_status_label.setText(tr("MIDI OK") if self.player.is_midi_available else tr("No MIDI output"))
@@ -2803,6 +2965,7 @@ class TabPlaybackPanel(QWidget):
         self.youtube_status_label.setStyleSheet("color: #596579;")
         controls.addWidget(self.youtube_status_label)
         layout.addLayout(controls)
+        self._update_youtube_sync_controls()
         self._build_recording_tab()
 
         self.score_scroll.setWidgetResizable(True)
@@ -2880,9 +3043,11 @@ class TabPlaybackPanel(QWidget):
     def set_song(self, song: SongData | None) -> None:
         self._stop()
         self.song = song
+        self.details = load_details_file(song.path) if song is not None else {}
         self._playback_measure_index = None
         self.score.set_song(song)
-        self.youtube_player.set_details(load_details_file(song.path) if song is not None else {})
+        self.youtube_player.set_details(self.details)
+        self._sync_youtube_sync_spin()
         count = len(song.track.measures) if song is not None else 1
         self.repeat_start_spin.setRange(1, max(1, count))
         self.repeat_end_spin.setRange(1, max(1, count))
@@ -3154,24 +3319,29 @@ class TabPlaybackPanel(QWidget):
         self._update_youtube_metronome()
 
     def _on_youtube_availability_changed(self, available: bool) -> None:
+        was_enabled = self.youtube_radio.isEnabled()
         self.youtube_radio.setEnabled(available)
         if available:
-            self.youtube_radio.setChecked(True)
+            if not was_enabled:
+                self.youtube_radio.setChecked(True)
         else:
             self.midi_radio.setChecked(True)
         self._update_youtube_metronome()
         self._update_youtube_status()
+        self._update_youtube_sync_controls()
 
     def _update_youtube_status(self) -> None:
-        if self.youtube_player.video_id and self.youtube_player.available:
+        if self.youtube_player.video_id and self.youtube_player.playback_available:
             self.youtube_status_label.setText(_trf("YouTube OK - {video_id}", video_id=self.youtube_player.video_id))
         elif self.youtube_player.video_id:
             self.youtube_status_label.setText(tr("YouTube unavailable"))
         else:
             self.youtube_status_label.setText(tr("No YouTube"))
+        self._update_youtube_sync_controls()
         if self.youtube_player.view is not None:
             self._position_youtube_view()
-            self.youtube_player.view.setVisible(self.youtube_radio.isChecked() and self.youtube_radio.isEnabled())
+            show_error_message = bool(self.youtube_player.error and self.youtube_player.video_id and not self.youtube_player.playback_available)
+            self.youtube_player.view.setVisible((self.youtube_radio.isChecked() and self.youtube_radio.isEnabled()) or show_error_message)
 
     def _position_youtube_view(self) -> None:
         view = self.youtube_player.view
@@ -3248,6 +3418,54 @@ class TabPlaybackPanel(QWidget):
         except (ValueError, IndexError):
             return 4
 
+    def _sync_youtube_sync_spin(self) -> None:
+        youtube = self.details.get("youtube") if isinstance(self.details, dict) else None
+        sync = youtube.get("sync") if isinstance(youtube, dict) else None
+        try:
+            offset_ms = int(round(float(sync.get("offset_seconds", 0.0)) * 1000 / 10) * 10) if isinstance(sync, dict) else 0
+        except (TypeError, ValueError):
+            offset_ms = 0
+        self._syncing_youtube_sync_spin = True
+        self.youtube_sync_spin.setValue(max(self.youtube_sync_spin.minimum(), min(self.youtube_sync_spin.maximum(), offset_ms)))
+        self._syncing_youtube_sync_spin = False
+        self.youtube_player.set_offset_milliseconds(self.youtube_sync_spin.value())
+        self._update_youtube_sync_controls()
+
+    def _update_youtube_sync_controls(self) -> None:
+        enabled = bool(self.song is not None and self.youtube_player.video_id and self.youtube_player.available)
+        for widget in (self.youtube_sync_spin, self.youtube_sync_down_button, self.youtube_sync_up_button):
+            widget.setEnabled(enabled)
+
+    def _round_to_sync_step(self, value: int) -> int:
+        sign = -1 if value < 0 else 1
+        rounded = ((abs(int(value)) + 5) // 10) * 10
+        return sign * rounded
+
+    def _adjust_youtube_sync(self, delta_ms: int) -> None:
+        self.youtube_sync_spin.setValue(self.youtube_sync_spin.value() + delta_ms)
+
+    def _on_youtube_sync_changed(self, value: int) -> None:
+        rounded = max(self.youtube_sync_spin.minimum(), min(self.youtube_sync_spin.maximum(), self._round_to_sync_step(value)))
+        if rounded != value:
+            self._syncing_youtube_sync_spin = True
+            self.youtube_sync_spin.setValue(rounded)
+            self._syncing_youtube_sync_spin = False
+            value = rounded
+        self.youtube_player.set_offset_milliseconds(value)
+        if self._syncing_youtube_sync_spin or self.song is None:
+            return
+        if update_youtube_sync_offset(self.details, value / 1000.0):
+            save_details_file(self.song.path, self.details)
+
+    def _adjust_speed(self, delta_percent: int) -> None:
+        self.speed_slider.setValue(self.speed_slider.value() + delta_percent)
+
+    def _on_youtube_video_ready(self, video_id: str) -> None:
+        if self.song is None:
+            return
+        if update_youtube_default_video(self.details, video_id):
+            save_details_file(self.song.path, self.details)
+
     def _on_score_selection_changed(self, start: int, end: int) -> None:
         was_playing = self._is_tab_playing()
         repeat_was_checked = self.repeat_check.isChecked()
@@ -3308,7 +3526,7 @@ class TabPlaybackPanel(QWidget):
         self.youtube_player.stop(emit=False)
         self.tab_metronome.stop()
         if self._use_youtube_source():
-            if not self.youtube_player.available or not self.youtube_player.video_id:
+            if not self.youtube_player.playback_available or not self.youtube_player.video_id:
                 QMessageBox.warning(
                     self,
                     tr("YouTube unavailable"),
@@ -3415,6 +3633,7 @@ class TabPlaybackPanel(QWidget):
         self.tab_metronome.stop()
         self._playback_measure_index = None
         self.score.set_playback_tick(None)
+        self.playbackTickChanged.emit(None)
 
     def _on_speed_changed(self, value: int) -> None:
         self.speed_label.setText(f"{value}%")
@@ -3424,6 +3643,7 @@ class TabPlaybackPanel(QWidget):
 
     def _on_playback_position_changed(self, tick: int) -> None:
         self.score.set_playback_tick(tick)
+        self.playbackTickChanged.emit(tick)
         if self.song is not None and self.song.track.measures:
             measure_index = self._measure_index_for_tick(tick)
             if measure_index != self._playback_measure_index:
@@ -3500,6 +3720,7 @@ class FretboardWidget(QWidget):
         self.segment: SegmentData | None = None
         self.candidate: Candidate | None = None
         self.kind = "scale"
+        self.playback_tick: int | None = None
         self.selected_scale_block_index: int | None = None
         self._scale_block_button_hits: list[tuple[QRect, int]] = []
         self.setFixedHeight(300)
@@ -3510,6 +3731,7 @@ class FretboardWidget(QWidget):
         self.measure = None
         self.segment = None
         self.candidate = None
+        self.playback_tick = None
         self.selected_scale_block_index = None
         self._scale_block_button_hits = []
         self.update()
@@ -3526,6 +3748,10 @@ class FretboardWidget(QWidget):
         self.candidate = candidate
         self.kind = kind
         self.selected_scale_block_index = None
+        self.update()
+
+    def set_playback_tick(self, tick: object) -> None:
+        self.playback_tick = int(tick) if tick is not None else None
         self.update()
 
     def mousePressEvent(self, event) -> None:  # type: ignore[override]
@@ -3602,6 +3828,7 @@ class FretboardWidget(QWidget):
         self._draw_position_dots_below_frets(painter, board, fret_count, fret_gap)
         self._draw_candidate_notes(painter, board, fret_count, fret_gap, string_gap)
         self._draw_measure_fingering(painter, board, fret_count, fret_gap, string_gap)
+        self._draw_current_playback_notes(painter, board, fret_count, fret_gap, string_gap)
         self._draw_scale_block_buttons(painter, board, scale_blocks)
 
     def _draw_scale_blocks(
@@ -3912,6 +4139,49 @@ class FretboardWidget(QWidget):
             else:
                 painter.setFont(fret_font)
                 painter.drawText(circle_rect, Qt.AlignmentFlag.AlignCenter, str(fret))
+
+    def _current_playback_notes(self) -> tuple[object, ...]:
+        if self.measure is None or self.playback_tick is None:
+            return ()
+        measure_start = self.measure.start_tick
+        measure_end = self.measure.start_tick + self.measure.length_ticks
+        if not (measure_start <= self.playback_tick < measure_end):
+            return ()
+        return tuple(
+            note
+            for note in self.measure.notes
+            if note.start_tick <= self.playback_tick < note.start_tick + max(1, note.duration_ticks)
+        )
+
+    def _draw_current_playback_notes(
+        self,
+        painter: QPainter,
+        board: QRect,
+        fret_count: int,
+        fret_gap: float,
+        string_gap: float,
+    ) -> None:
+        if self.song is None:
+            return
+        notes = self._current_playback_notes()
+        if not notes:
+            return
+
+        painter.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        for note in notes:
+            if note.fret < 0 or note.fret > fret_count:
+                continue
+            string_index = int(note.string) - 1
+            if string_index < 0 or string_index >= len(self.song.track.string_pitches):
+                continue
+            x = self._fret_center_x(board, fret_gap, int(note.fret))
+            y = int(board.top() + string_index * string_gap)
+            radius = 20
+            painter.setPen(QPen(QColor("#f5d0fe"), 3))
+            painter.setBrush(QColor("#7e22ce"))
+            painter.drawEllipse(QPoint(x, y), radius, radius)
+            painter.setPen(QColor("#ffffff"))
+            painter.drawText(QRect(x - radius, y - radius, radius * 2, radius * 2), Qt.AlignmentFlag.AlignCenter, str(note.fret))
 
     def _root_is_played(self) -> bool:
         if self.kind != "chord" or self.candidate is None or self.measure is None:
@@ -4953,8 +5223,8 @@ class ChordPositionsWidget(QWidget):
             painter.drawLine(x, board.top(), x, board.bottom())
 
         painter.setFont(QFont("Segoe UI", 8))
-        for fret in range(range_start, range_end + 1):
-            x = int(board.left() + (fret - range_start + 0.5) * fret_gap)
+        for fret in self._mini_visible_fret_labels(range_start, range_end):
+            x = self._mini_fret_center_x(board, fret_gap, fret, range_start)
             painter.setPen(QColor("#697586"))
             painter.drawText(QRect(int(x - fret_gap / 2), board.bottom() + 12, int(fret_gap), 16), Qt.AlignmentFlag.AlignCenter, str(fret))
 
@@ -5018,7 +5288,7 @@ class ChordPositionsWidget(QWidget):
         strings = [index for index, fret in enumerate(position.frets_high_to_low) if fret == position.barre_fret]
         if len(strings) < 2:
             return
-        x = int(board.left() + (position.barre_fret - range_start + 0.5) * fret_gap)
+        x = self._mini_fret_center_x(board, fret_gap, position.barre_fret, range_start)
         top = int(board.top() + min(strings) * string_gap) - 15
         bottom = int(board.top() + max(strings) * string_gap) + 15
         painter.setPen(QPen(QColor("#b45309"), 1.2))
@@ -5043,10 +5313,7 @@ class ChordPositionsWidget(QWidget):
         for string_index, fret in enumerate(position.frets_high_to_low):
             if fret < 0 or not (range_start <= fret <= range_end):
                 continue
-            if fret == 0:
-                x = int(board.left())
-            else:
-                x = int(board.left() + (fret - range_start + 0.5) * fret_gap)
+            x = self._mini_fret_center_x(board, fret_gap, fret, range_start)
             y = int(board.top() + string_index * string_gap)
             is_barre = position.barre_fret == fret
             interval = (self.song.track.string_pitches[string_index] + fret - self.candidate.root_pc) % 12
@@ -5100,6 +5367,18 @@ class ChordPositionsWidget(QWidget):
 
     def _chord_position_degree_label(self, interval: int) -> str:
         return "R" if interval % 12 == 0 else CHORD_DEGREE_LABELS[interval % 12]
+
+    def _mini_visible_fret_labels(self, range_start: int, range_end: int) -> range:
+        if range_start == 0:
+            return range(1, range_end + 2)
+        return range(range_start, range_end + 1)
+
+    def _mini_fret_center_x(self, board: QRect, fret_gap: float, fret: int, range_start: int) -> int:
+        if fret == 0:
+            return int(board.left())
+        if range_start == 0:
+            return int(board.left() + (fret - 0.5) * fret_gap)
+        return int(board.left() + (fret - range_start + 0.5) * fret_gap)
 
     def _visible_positions(self) -> tuple[ChordPosition, ...]:
         return filter_chord_positions(
@@ -5725,8 +6004,8 @@ class ChordFinderWidget(QWidget):
             painter.drawLine(x, board.top(), x, board.bottom())
 
         painter.setFont(QFont("Segoe UI", 8))
-        for fret in range(range_start, range_end + 1):
-            x = int(board.left() + (fret - range_start + 0.5) * fret_gap)
+        for fret in self._match_visible_fret_labels(range_start, range_end):
+            x = self._match_fret_center_x(board, fret_gap, fret, range_start)
             painter.setPen(QColor("#697586"))
             painter.drawText(QRect(int(x - fret_gap / 2), board.bottom() + 12, int(fret_gap), 16), Qt.AlignmentFlag.AlignCenter, str(fret))
 
@@ -5789,7 +6068,7 @@ class ChordFinderWidget(QWidget):
         strings = [index for index, fret in enumerate(position.frets_high_to_low) if fret == position.barre_fret]
         if len(strings) < 2:
             return
-        x = int(board.left() + (position.barre_fret - range_start + 0.5) * fret_gap)
+        x = self._match_fret_center_x(board, fret_gap, position.barre_fret, range_start)
         top = int(board.top() + min(strings) * string_gap) - 15
         bottom = int(board.top() + max(strings) * string_gap) + 15
         painter.setPen(QPen(QColor("#b45309"), 1.2))
@@ -5812,10 +6091,7 @@ class ChordFinderWidget(QWidget):
         for string_index, fret in enumerate(position.frets_high_to_low):
             if fret < 0 or not (range_start <= fret <= range_end):
                 continue
-            if fret == 0:
-                x = int(board.left())
-            else:
-                x = int(board.left() + (fret - range_start + 0.5) * fret_gap)
+            x = self._match_fret_center_x(board, fret_gap, fret, range_start)
             y = int(board.top() + string_index * string_gap)
             is_barre = position.barre_fret == fret
             interval = (self._string_pitches()[string_index] + fret - candidate.root_pc) % 12
@@ -5869,6 +6145,18 @@ class ChordFinderWidget(QWidget):
 
     def _chord_position_degree_label(self, interval: int) -> str:
         return "R" if interval % 12 == 0 else CHORD_DEGREE_LABELS[interval % 12]
+
+    def _match_visible_fret_labels(self, range_start: int, range_end: int) -> range:
+        if range_start == 0:
+            return range(1, range_end + 2)
+        return range(range_start, range_end + 1)
+
+    def _match_fret_center_x(self, board: QRect, fret_gap: float, fret: int, range_start: int) -> int:
+        if fret == 0:
+            return int(board.left())
+        if range_start == 0:
+            return int(board.left() + (fret - 0.5) * fret_gap)
+        return int(board.left() + (fret - range_start + 0.5) * fret_gap)
 
     def _display_fret_range(self, position: ChordPosition) -> tuple[int, int]:
         if position.fretted_count == 0:
@@ -5970,6 +6258,7 @@ class TabAnalyzerWindow(QMainWindow):
         self.memo_autosave_timer = QTimer(self)
         self.memo_sync_timer = QTimer(self)
         self.manual_dialog: QDialog | None = None
+        self.about_dialog: QDialog | None = None
         self._preserving_playback_selection = False
         self._load_thread: QThread | None = None
         self._load_worker: _LoadWorker | None = None
@@ -5984,6 +6273,7 @@ class TabAnalyzerWindow(QMainWindow):
         self.tab_canvas.memoClicked.connect(self._open_memo_for_measure)
         self.tab_playback_panel.selectionChanged.connect(self._on_tab_block_selection_changed)
         self.tab_playback_panel.playbackMeasureChanged.connect(self._on_tab_playback_measure_changed)
+        self.tab_playback_panel.playbackTickChanged.connect(self.fretboard.set_playback_tick)
         self.tab_canvas.zoomWheelRequested.connect(self._adjust_zoom_by_delta)
         self.tab_playback_panel.zoomWheelRequested.connect(self._adjust_zoom_by_delta)
         self.analysis_scroll.viewport().installEventFilter(self)
@@ -6022,7 +6312,7 @@ class TabAnalyzerWindow(QMainWindow):
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
 
-        open_action = QAction("Open", self)
+        open_action = QAction(tr("File Open"), self)
         open_action.triggered.connect(self._open_file_dialog)
         file_menu.addAction(open_action)
         toolbar.addAction(open_action)
@@ -6734,11 +7024,36 @@ class TabAnalyzerWindow(QMainWindow):
         )
 
     def _open_about(self) -> None:
-        QMessageBox.about(
-            self,
-            tr("About Tab Analyzer"),
-            _trf("Tab Analyzer\n\nVersion: {version}\n{url}", version=__version__, url="https://github.com/swirlpotato/TabAnalyzer"),
-        )
+        dialog = self.about_dialog
+        if dialog is None:
+            dialog = QDialog(self)
+            dialog.setWindowTitle(tr("About Tab Analyzer"))
+            dialog.resize(460, 220)
+
+            browser = QTextBrowser(dialog)
+            browser.setOpenLinks(False)
+            browser.setOpenExternalLinks(False)
+            browser.anchorClicked.connect(_open_external_url)
+            browser.setHtml(_about_html(__version__))
+
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, dialog)
+            buttons.rejected.connect(dialog.close)
+
+            layout = QVBoxLayout(dialog)
+            layout.setContentsMargins(12, 12, 12, 12)
+            layout.addWidget(browser)
+            layout.addWidget(buttons)
+            dialog.finished.connect(lambda _result: setattr(self, "about_dialog", None))
+            self.about_dialog = dialog
+        else:
+            dialog.setWindowTitle(tr("About Tab Analyzer"))
+            browser = dialog.findChild(QTextBrowser)
+            if browser is not None:
+                browser.setHtml(_about_html(__version__))
+
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _populate_track_combo(self, tracks, selected_track: int) -> None:
         self.track_combo.blockSignals(True)

@@ -11,6 +11,7 @@ from tab_analyzer.ui import (
     _set_youtube_view_size,
     _youtube_player_html,
     _youtube_player_url,
+    _youtube_video_candidates,
 )
 
 
@@ -36,13 +37,15 @@ class FakeWebView:
 
 class YouTubePlayerHtmlTests(unittest.TestCase):
     def test_player_html_includes_embed_origin_and_referrer(self):
-        html = _youtube_player_html("abc123", "http://127.0.0.1:43210")
+        html = _youtube_player_html("abc123", "http://127.0.0.1:43210", "Changing")
 
         self.assertIn('meta name="referrer"', html)
         self.assertIn("enablejsapi: 1", html)
         self.assertIn("host: 'https://www.youtube-nocookie.com'", html)
         self.assertIn("origin: PLAYER_ORIGIN", html)
         self.assertIn("widget_referrer: PLAYER_ORIGIN", html)
+        self.assertIn("setStatus(INITIAL_STATUS)", html)
+        self.assertIn('"Changing"', html)
         self.assertIn('"http://127.0.0.1:43210"', html)
         self.assertIn('"abc123"', html)
 
@@ -50,6 +53,28 @@ class YouTubePlayerHtmlTests(unittest.TestCase):
         self.assertEqual(
             _youtube_player_url("http://127.0.0.1:43210", "abc 123"),
             "http://127.0.0.1:43210/youtube-player?video_id=abc%20123",
+        )
+
+    def test_player_url_can_include_status_message(self):
+        self.assertEqual(
+            _youtube_player_url("http://127.0.0.1:43210", "abc123", "다른 영상으로 변경 중입니다."),
+            "http://127.0.0.1:43210/youtube-player?video_id=abc123&status=%EB%8B%A4%EB%A5%B8%20%EC%98%81%EC%83%81%EC%9C%BC%EB%A1%9C%20%EB%B3%80%EA%B2%BD%20%EC%A4%91%EC%9E%85%EB%8B%88%EB%8B%A4.",
+        )
+
+    def test_video_candidates_start_with_default_and_deduplicate_done_videos(self):
+        self.assertEqual(
+            _youtube_video_candidates(
+                {
+                    "default_video_id": "main",
+                    "videos": [
+                        {"video_id": "backing", "status": "done"},
+                        {"video_id": "main", "status": "done"},
+                        {"video_id": "pending", "status": "processing"},
+                        {"videoId": "legacy", "status": "done"},
+                    ],
+                }
+            ),
+            ["main", "backing", "legacy"],
         )
 
     def test_qt_webengine_autoplay_flag_is_enabled(self):

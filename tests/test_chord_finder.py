@@ -15,6 +15,15 @@ class ChordFinderTests(unittest.TestCase):
 
         self.assertEqual(suffixes, ["", "m", "7", "maj7", "m7"])
 
+    def test_types_stay_at_intermediate_guitar_level(self):
+        suffixes = {chord_type.suffix for chord_type in CHORD_FINDER_TYPES}
+
+        self.assertIn("9", suffixes)
+        self.assertIn("m7b5", suffixes)
+        self.assertNotIn("7b9", suffixes)
+        self.assertNotIn("13#11", suffixes)
+        self.assertNotIn("7alt", suffixes)
+
     def test_clicking_c_prioritizes_c_root_chords(self):
         matches = find_chords_containing_pitch(0)
         names = [match.candidate.name for match in matches[:5]]

@@ -8,6 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QLabel, QMenu, QPushButton, QTabWidget, QTextEdit, QWidget
 
+from tab_analyzer.analysis import SCALE_PATTERNS
 from tab_analyzer.chord_finder import CHORD_FINDER_TYPES
 from tab_analyzer import i18n
 from tab_analyzer.i18n import LOCALE_DIR, SUPPORTED_LANGUAGES, apply_translations, current_language, tr
@@ -55,6 +56,24 @@ class I18nTests(unittest.TestCase):
                 with self.subTest(language=language, name=name):
                     self.assertEqual(tr(name, language), name)
 
+    def test_open_chord_label_stays_english(self):
+        for language in SUPPORTED_LANGUAGES:
+            with self.subTest(language=language):
+                self.assertEqual(tr("Open", language), "Open")
+
+    def test_file_open_has_its_own_translation_key(self):
+        ko = _locale("ko")
+        self.assertEqual(tr("File Open", "ko"), ko["File Open"])
+        self.assertEqual(tr("File Open", "ko"), "\uc5f4\uae30")
+
+    def test_scale_names_stay_english(self):
+        scale_names = {name for name, _intervals in SCALE_PATTERNS}
+        scale_names.add("minor (natural minor)")
+        for language in SUPPORTED_LANGUAGES:
+            for name in scale_names:
+                with self.subTest(language=language, name=name):
+                    self.assertEqual(tr(name, language), name)
+
     def test_missing_language_falls_back_to_english(self):
         self.assertEqual(tr("Play", "de"), "Play")
 
@@ -62,7 +81,7 @@ class I18nTests(unittest.TestCase):
         ko = _locale("ko")
         self.assertEqual(tr("Play", "ko"), ko["Play"])
         self.assertEqual(tr("File", "ko"), ko["File"])
-        self.assertEqual(tr("Open", "ko"), ko["Open"])
+        self.assertEqual(tr("File Open", "ko"), ko["File Open"])
 
     def test_windows_korean_locale_maps_to_ko(self):
         with patch("locale.getlocale", return_value=("Korean_Korea", "949")):

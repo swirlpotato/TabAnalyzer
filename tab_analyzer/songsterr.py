@@ -153,11 +153,73 @@ def load_details_file(path: str | Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _write_details_file(file_path: Path, result: SongsterrResult, meta: dict) -> Path:
-    details = _songsterr_details(result, meta)
-    details_path = details_path_for_gp(file_path)
+def save_details_file(path: str | Path, details: dict) -> Path:
+    details_path = details_path_for_gp(path)
     details_path.write_text(json.dumps(details, ensure_ascii=False, indent=2), encoding="utf-8")
     return details_path
+
+
+def update_youtube_default_video(details: dict, video_id: str) -> bool:
+    video_id = str(video_id or "").strip()
+    if not video_id:
+        return False
+
+    youtube = details.setdefault("youtube", {})
+    if not isinstance(youtube, dict):
+        details["youtube"] = youtube = {}
+
+    changed = youtube.get("default_video_id") != video_id
+    youtube["default_video_id"] = video_id
+    default_url = f"https://www.youtube.com/watch?v={video_id}"
+    if youtube.get("default_video_url") != default_url:
+        changed = True
+    youtube["default_video_url"] = default_url
+
+    videos = youtube.get("videos")
+    if not isinstance(videos, list):
+        return changed
+
+    match_index = next(
+        (
+            index
+            for index, video in enumerate(videos)
+            if isinstance(video, dict) and str(video.get("video_id") or video.get("videoId") or "").strip() == video_id
+        ),
+        None,
+    )
+    if match_index is None:
+        return changed
+
+    video = videos[match_index]
+    if isinstance(video, dict):
+        if video.get("video_id") != video_id or not video.get("url"):
+            changed = True
+        video["video_id"] = video_id
+        video["url"] = str(video.get("url") or default_url)
+    if match_index != 0:
+        youtube["videos"] = [video, *videos[:match_index], *videos[match_index + 1 :]]
+        changed = True
+    return changed
+
+
+def update_youtube_sync_offset(details: dict, offset_seconds: float) -> bool:
+    youtube = details.setdefault("youtube", {})
+    if not isinstance(youtube, dict):
+        details["youtube"] = youtube = {}
+    sync = youtube.get("sync")
+    if not isinstance(sync, dict):
+        sync = {}
+        youtube["sync"] = sync
+    rounded_offset = round(float(offset_seconds), 3)
+    if sync.get("offset_seconds") == rounded_offset:
+        return False
+    sync["offset_seconds"] = rounded_offset
+    return True
+
+
+def _write_details_file(file_path: Path, result: SongsterrResult, meta: dict) -> Path:
+    details = _songsterr_details(result, meta)
+    return save_details_file(file_path, details)
 
 
 def _songsterr_details(result: SongsterrResult, meta: dict) -> dict:

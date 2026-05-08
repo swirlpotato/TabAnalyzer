@@ -66,6 +66,15 @@ class ChordPositionTests(unittest.TestCase):
         self.assertNotIn("Triad", c_shape.categories)
         self.assertEqual(c_shape.label, "Core")
 
+    def test_open_position_diagram_does_not_render_zero_fret_column(self):
+        chord = Candidate("chord", "C", 0, (0, 4, 7), 100, 3, 3, 0)
+
+        html = render_chord_positions_html("Song", "Guitar", 1, chord, STANDARD_TUNING_HIGH_TO_LOW, 24, None)
+
+        self.assertNotIn('<td class="fret-head">0</td>', html)
+        self.assertIn('<td class="status open">o</td>', html)
+        self.assertIn('<td class="fret-head">1</td>', html)
+
     def test_extended_chords_include_non_triad_voicings(self):
         chord = Candidate("chord", "C13#11", 0, (0, 2, 4, 6, 7, 9, 10), 90, 7, 7, 0)
 
