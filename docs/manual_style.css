@@ -1,27 +1,33 @@
 body {
   margin: 0;
-  font-family: "Malgun Gothic", "Segoe UI", sans-serif;
+  font-family: "Malgun Gothic", "Segoe UI", Arial, sans-serif;
   color: #202633;
-  background: #f6f8fb;
+  background: #f4f6f9;
 }
 
 main {
-  max-width: 920px;
+  max-width: 980px;
   min-height: 100vh;
   margin: 0 auto;
-  padding: 28px;
+  padding: 30px;
   background: #fff;
 }
 
 h1 {
-  margin-top: 0;
-  font-size: 28px;
+  margin: 0 0 8px;
+  font-size: 30px;
 }
 
 h2 {
-  margin-top: 28px;
-  padding-bottom: 6px;
+  margin-top: 34px;
+  padding-bottom: 7px;
   border-bottom: 1px solid #d9e0ea;
+  font-size: 22px;
+}
+
+h3 {
+  margin-top: 22px;
+  font-size: 17px;
 }
 
 p,
@@ -47,26 +53,39 @@ td {
   border: 1px solid #d9e0ea;
   padding: 8px;
   text-align: left;
+  vertical-align: top;
 }
 
-.menu {
+img {
+  max-width: 100%;
+  border: 1px solid #d8dee8;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+figure {
+  margin: 18px 0 24px;
+}
+
+figcaption {
+  margin-top: 6px;
+  color: #596579;
+  font-size: 13px;
+}
+
+.toc {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 10px;
-  margin-top: 24px;
+  margin: 20px 0 28px;
 }
 
-a,
-.back {
-  color: #1d4ed8;
-}
-
-.menu a,
-.back {
+.toc a {
   display: block;
   padding: 10px 12px;
   border: 1px solid #cfd7e3;
   border-radius: 6px;
+  color: #1d4ed8;
   background: #fbfcff;
   text-decoration: none;
   font-weight: 600;
@@ -76,4 +95,18 @@ a,
   background: #fff7db;
   border-left: 4px solid #f2bf2f;
   padding: 10px 12px;
+}
+
+.step-list {
+  padding-left: 22px;
+}
+
+.kbd {
+  border: 1px solid #cfd7e3;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 1px 5px;
+  background: #fbfcff;
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-size: 0.92em;
 }

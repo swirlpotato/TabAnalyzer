@@ -66,6 +66,15 @@ class I18nTests(unittest.TestCase):
         self.assertEqual(tr("File Open", "ko"), ko["File Open"])
         self.assertEqual(tr("File Open", "ko"), "\uc5f4\uae30")
 
+    def test_new_menu_and_tuner_terms_are_not_mojibake(self):
+        self.assertEqual(tr("Additional Features", "ko"), "추가 기능")
+        self.assertEqual(tr("Chromatic tuner", "ko"), "크로매틱 튜너")
+        self.assertEqual(tr("Close file", "ko"), "파일 닫기")
+        self.assertEqual(tr("Input device", "ko"), "입력 장치")
+        self.assertEqual(tr("Last signal", "ko"), "최근 신호")
+        self.assertEqual(tr("Target string", "ko"), "목표 현")
+        self.assertEqual(tr("Auto string", "ko"), "자동 현 선택")
+
     def test_scale_names_stay_english(self):
         scale_names = {name for name, _intervals in SCALE_PATTERNS}
         scale_names.add("minor (natural minor)")

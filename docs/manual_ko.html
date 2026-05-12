@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tab Analyzer 매뉴얼</title>
+  <link rel="stylesheet" href="manual_style.css">
+</head>
+<body>
+<main>
+  <h1>Tab Analyzer 매뉴얼</h1>
+  <p>처음 실행한 사용자가 그대로 따라 할 수 있도록 앱의 흐름대로 정리했습니다. Guitar Pro 파일을 열고, 분석을 읽고, 타브를 재생하고, 메모와 녹음을 남긴 뒤, 크로매틱 튜너를 사용하는 순서입니다.</p>
+
+  <nav class="toc">
+    <a href="#open">1. 파일 열기와 닫기</a>
+    <a href="#overview">2. 화면 구조 읽기</a>
+    <a href="#analysis">3. 마디 분석 따라가기</a>
+    <a href="#player">4. 타브 플레이어 사용</a>
+    <a href="#views">5. 스케일과 코드 보기</a>
+    <a href="#memo">6. 메모 작성</a>
+    <a href="#recording">7. 연습 녹음</a>
+    <a href="#tuner">8. 크로매틱 튜너</a>
+  </nav>
+
+  <section id="open">
+    <h2>1. 파일 열기와 닫기</h2>
+    <ol class="step-list">
+      <li><b>파일 &gt; 열기</b>를 선택한 뒤 <code>.gp</code>, <code>.gp3</code>, <code>.gp4</code>, <code>.gp5</code>, <code>.gpx</code> 파일을 엽니다.</li>
+      <li>파일에 기타 트랙이 여러 개 있으면 상단의 <b>트랙</b> 콤보 박스에서 분석할 트랙을 선택합니다.</li>
+      <li><b>튜닝</b>에서 파일 원본 튜닝을 그대로 쓰거나, 내장 튜닝으로 바꿔 미리 볼 수 있습니다.</li>
+      <li>예전에 열었던 곡은 <b>파일 &gt; 최근 연 파일</b>에서 다시 열 수 있습니다.</li>
+      <li><b>파일 &gt; 파일 닫기</b>를 누르면 처음 실행했을 때처럼 아무 파일도 로드되지 않은 상태로 돌아갑니다.</li>
+      <li><b>파일 &gt; 종료</b>를 누르면 프로그램이 종료됩니다.</li>
+    </ol>
+    <p class="note">메모에 저장하지 않은 변경 사항이 있으면, 새 파일을 열거나 파일을 닫거나 종료하기 전에 저장 여부를 묻습니다.</p>
+  </section>
+
+  <section id="overview">
+    <h2>2. 화면 구조 읽기</h2>
+    <figure>
+      <img src="images/manual_overview.png" alt="Tab Analyzer 전체 화면">
+      <figcaption>왼쪽은 분석과 타브 플레이어, 오른쪽은 곡 분석과 코드/녹음 도구입니다.</figcaption>
+    </figure>
+    <ol class="step-list">
+      <li>상단 툴바에는 파일 열기, Songsterr 검색, 확대/축소, 트랙 선택, 튜닝 선택이 있습니다.</li>
+      <li>왼쪽 위 영역은 <b>분석 마디</b>와 <b>타브 플레이어</b> 탭으로 나뉩니다.</li>
+      <li>왼쪽 아래 탭에는 선택한 마디의 프렛보드, 스케일 뷰, 곡 스케일 뷰, 마디 설명, 메모가 표시됩니다.</li>
+      <li>오른쪽 패널에는 곡 전체 분석, 코드 포지션, 코드 찾기, 녹음 도구가 있습니다.</li>
+    </ol>
+  </section>
+
+  <section id="analysis">
+    <h2>3. 마디 분석 따라가기</h2>
+    <figure>
+      <img src="screenshot_tabanalyze.png" alt="마디 분석 화면">
+      <figcaption>각 마디에는 가장 가능성이 높은 스케일과 코드 후보, 그리고 후보 점수가 표시됩니다.</figcaption>
+    </figure>
+    <ol class="step-list">
+      <li>마디를 클릭하면 해당 마디가 선택되고 아래 프렛보드와 설명 영역이 함께 갱신됩니다.</li>
+      <li>마디 안의 스케일 또는 코드 칩을 클릭하면 그 후보가 선택된 이유를 볼 수 있습니다.</li>
+      <li>아래 <b>마디 설명</b> 탭에서 스케일 근거, 코드 근거, 기능 해석을 확인합니다.</li>
+      <li>코드 칩을 선택하면 오른쪽 패널이 <b>코드 포지션</b>으로 전환되고 실제 연주 가능한 폼이 표시됩니다.</li>
+      <li><b>확대/축소</b> 슬라이더를 쓰거나 <span class="kbd">Ctrl</span>을 누른 채 휠을 굴려 보기 크기를 조절합니다.</li>
+    </ol>
+  </section>
+
+  <section id="player">
+    <h2>4. 타브 플레이어 사용</h2>
+    <figure>
+      <img src="screenshot_tabplay.png" alt="타브 플레이어 화면">
+      <figcaption>타브 플레이어는 MIDI 재생, YouTube 영상 동기화, 선택 구간 반복 연습을 지원합니다.</figcaption>
+    </figure>
+    <ol class="step-list">
+      <li><b>타브 플레이어</b> 탭을 엽니다.</li>
+      <li>악보에서 마디를 클릭하거나 드래그해서 한 마디 또는 여러 마디를 선택합니다.</li>
+      <li><b>재생</b>을 누르면 재생이 시작됩니다. MIDI 장치가 없어도 커서는 움직이므로 악보를 따라갈 수 있습니다.</li>
+      <li><b>선택 반복</b>을 켜면 선택한 마디 구간만 반복됩니다.</li>
+      <li><b>속도</b>를 낮추면 어려운 구간을 천천히 연습할 수 있습니다.</li>
+      <li>Songsterr에서 가져온 파일에 YouTube 정보가 있으면 영상 컨트롤과 <b>싱크</b> 값을 조절해 타브와 영상을 맞춥니다.</li>
+    </ol>
+  </section>
+
+  <section id="views">
+    <h2>5. 스케일과 코드 보기</h2>
+    <table>
+      <tr><th>보기</th><th>사용 방법</th></tr>
+      <tr><td>프렛보드</td><td>마디나 구간을 선택하면 현재 선택에 필요한 음들이 초록 점으로 표시됩니다.</td></tr>
+      <tr><td>스케일 뷰</td><td>루트와 스케일 종류를 고르면 사용할 수 있는 포지션 블록을 볼 수 있습니다.</td></tr>
+      <tr><td>곡 스케일 뷰</td><td>곡 전체에서 자주 쓰이는 스케일 블록을 확인합니다.</td></tr>
+      <tr><td>곡 분석</td><td>중심 스케일, 반복 진행, 화성 리듬, 기능 분포를 한 번에 읽습니다.</td></tr>
+      <tr><td>코드 포지션</td><td>코드 후보를 클릭한 뒤 루트 현이나 코드 유형으로 연주 가능한 폼을 좁힙니다.</td></tr>
+      <tr><td>코드 찾기</td><td>프렛보드에서 음을 선택해 해당 음들을 포함하는 코드 이름과 폼을 찾습니다.</td></tr>
+    </table>
+  </section>
+
+  <section id="memo">
+    <h2>6. 메모 작성</h2>
+    <figure>
+      <img src="images/manual_memo.png" alt="메모 편집 화면">
+      <figcaption>메모는 마디별로 저장되며 Markdown 문법을 사용할 수 있습니다.</figcaption>
+    </figure>
+    <ol class="step-list">
+      <li>마디를 선택한 뒤 아래쪽 <b>메모</b> 탭을 엽니다.</li>
+      <li>연습 포인트, 운지, 레슨 기록 등을 Markdown으로 적습니다.</li>
+      <li><b>파일 &gt; 메모 저장</b>을 선택하거나 <span class="kbd">Ctrl</span>+<span class="kbd">S</span>를 누릅니다.</li>
+      <li><b>다른 이름으로 메모 저장</b>을 사용하면 별도의 <code>.mmdx</code> 메모 패키지를 만들 수 있습니다.</li>
+      <li><b>메모 불러오기</b>로 기존 메모 패키지를 현재 타브에 연결할 수 있습니다.</li>
+    </ol>
+  </section>
+
+  <section id="recording">
+    <h2>7. 연습 녹음</h2>
+    <ol class="step-list">
+      <li>오른쪽의 <b>녹음</b> 탭을 엽니다.</li>
+      <li><b>입력</b>에서 마이크나 오디오 인터페이스를 선택합니다.</li>
+      <li><b>BPM</b>과 <b>박자</b>를 설정합니다. 메트로놈 클릭을 녹음 파일에 섞고 싶으면 <b>클릭 녹음</b>을 켭니다.</li>
+      <li><span class="kbd">F10</span> 또는 녹음 버튼을 눌러 녹음을 시작합니다.</li>
+      <li><span class="kbd">F11</span>을 눌러 녹음을 멈춥니다.</li>
+      <li><span class="kbd">F12</span>로 마지막 녹음을 재생하거나, 목록에서 이전 녹음을 재생/삭제합니다.</li>
+    </ol>
+  </section>
+
+  <section id="tuner">
+    <h2>8. 크로매틱 튜너</h2>
+    <figure>
+      <img src="images/manual_tuner.png" alt="크로매틱 튜너 화면">
+      <figcaption>튜너는 별도 창으로 열리며, 선택한 오디오 입력 장치의 신호를 사용합니다.</figcaption>
+    </figure>
+    <ol class="step-list">
+      <li><b>추가 기능 &gt; 크로매틱 튜너</b>를 선택합니다.</li>
+      <li>입력 장치를 선택합니다. 튜너 창을 연 뒤 오디오 인터페이스를 연결했다면 <b>새로 고침</b>을 누릅니다.</li>
+      <li><b>기준 A4</b>를 설정합니다. 일반적인 기준은 440.0 Hz입니다.</li>
+      <li><b>단일 현</b>은 한 줄씩 조율하는 모드입니다. 튜닝 프리셋을 고른 뒤 <b>목표 현</b>을 자동으로 두거나 직접 선택하고, 미터가 가운데 오며 상태가 <b>정확함</b>이 될 때까지 조율합니다.</li>
+      <li><b>모든 현</b>을 선택한 뒤 Standard, Drop D, D Standard, DADGAD, Open G 같은 튜닝 프리셋을 고릅니다.</li>
+      <li>개방현 전체를 스트럼하고 가장 낮은 줄부터 가장 높은 줄까지 각 행을 확인합니다.</li>
+      <li>현 신호가 순간적으로 끊기면 마지막으로 안정적으로 잡힌 위치가 잠시 <b>최근 신호</b>로 유지됩니다.</li>
+      <li>쓰지 않는 줄은 뮤트하고, 클리핑이나 과한 이펙터를 피하세요. 주변 소음과 입력 레벨은 감지 안정성에 직접 영향을 줍니다.</li>
+    </ol>
+  </section>
+</main>
+</body>
+</html>

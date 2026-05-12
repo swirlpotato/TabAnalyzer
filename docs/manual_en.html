@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tab Analyzer Manual</title>
+  <link rel="stylesheet" href="manual_style.css">
+</head>
+<body>
+<main>
+  <h1>Tab Analyzer Manual</h1>
+  <p>Use this guide from top to bottom the first time you run Tab Analyzer. It follows the same order as the app: open a Guitar Pro file, inspect analysis, play the tab, save notes, record practice, and use the tuner.</p>
+
+  <nav class="toc">
+    <a href="#open">1. Open And Close Files</a>
+    <a href="#overview">2. Read The Screen</a>
+    <a href="#analysis">3. Follow Measure Analysis</a>
+    <a href="#player">4. Use The Tab Player</a>
+    <a href="#views">5. Scale And Chord Views</a>
+    <a href="#memo">6. Write Memos</a>
+    <a href="#recording">7. Record Practice</a>
+    <a href="#tuner">8. Chromatic Tuner</a>
+  </nav>
+
+  <section id="open">
+    <h2>1. Open And Close Files</h2>
+    <ol class="step-list">
+      <li>Choose <b>File &gt; Open</b>, then select a <code>.gp</code>, <code>.gp3</code>, <code>.gp4</code>, <code>.gp5</code>, or <code>.gpx</code> file.</li>
+      <li>Use the <b>Track</b> combo box when the file has multiple guitar tracks.</li>
+      <li>Use <b>Tuning</b> to keep the file tuning or preview another built-in tuning.</li>
+      <li>Open a previous song from <b>File &gt; Recent files</b>.</li>
+      <li>Choose <b>File &gt; Close file</b> to return the app to the initial no-file state.</li>
+      <li>Choose <b>File &gt; Exit</b> to quit the app.</li>
+    </ol>
+    <p class="note">If a memo has unsaved changes, Tab Analyzer asks whether to save before opening, closing, or exiting.</p>
+  </section>
+
+  <section id="overview">
+    <h2>2. Read The Screen</h2>
+    <figure>
+      <img src="images/manual_overview.png" alt="Tab Analyzer overview screen">
+      <figcaption>Main layout: analysis/tab player on the left, detailed views and tools on the right.</figcaption>
+    </figure>
+    <ol class="step-list">
+      <li>The top toolbar contains file actions, Songsterr search, zoom, track selection, and tuning selection.</li>
+      <li>The upper-left area has <b>Analysis measures</b> and <b>Tab player</b> tabs.</li>
+      <li>The lower-left tabs show the selected measure on the fretboard, scale view, song scale view, measure notes, and memo editor.</li>
+      <li>The right panel shows whole-song analysis, chord positions, chord finder, and recording tools.</li>
+    </ol>
+  </section>
+
+  <section id="analysis">
+    <h2>3. Follow Measure Analysis</h2>
+    <figure>
+      <img src="screenshot_tabanalyze.png" alt="Measure analysis screenshot">
+      <figcaption>Each measure shows the best scale and chord candidates, plus the score used for ranking.</figcaption>
+    </figure>
+    <ol class="step-list">
+      <li>Click a measure to focus it. The fretboard and explanation panes update together.</li>
+      <li>Click a scale or chord chip inside a measure to see why that candidate was selected.</li>
+      <li>Use the lower <b>Measure notes</b> tab to read scale evidence, chord evidence, and function interpretation.</li>
+      <li>When a chord chip is selected, the right panel switches to <b>Chord positions</b> and shows playable shapes.</li>
+      <li>Use <b>Zoom</b> or hold <span class="kbd">Ctrl</span> and scroll to resize the analysis view.</li>
+    </ol>
+  </section>
+
+  <section id="player">
+    <h2>4. Use The Tab Player</h2>
+    <figure>
+      <img src="screenshot_tabplay.png" alt="Tab player screenshot">
+      <figcaption>The tab player can play MIDI, follow a YouTube video when available, and repeat a selected measure range.</figcaption>
+    </figure>
+    <ol class="step-list">
+      <li>Open the <b>Tab player</b> tab.</li>
+      <li>Select one or more measures by dragging across the score.</li>
+      <li>Press <b>Play</b> to start playback. If MIDI output is unavailable, the cursor still moves so you can follow the score.</li>
+      <li>Set <b>Repeat selection</b> to loop the selected measures.</li>
+      <li>Adjust <b>Speed</b> for slow practice.</li>
+      <li>If the Songsterr file has YouTube metadata, use the YouTube controls and <b>Sync</b> offset to align playback.</li>
+    </ol>
+  </section>
+
+  <section id="views">
+    <h2>5. Scale And Chord Views</h2>
+    <table>
+      <tr><th>View</th><th>How to use it</th></tr>
+      <tr><td>Fretboard</td><td>Select a measure or segment. Green dots show the notes that matter for the current selection.</td></tr>
+      <tr><td>Scale view</td><td>Pick a root and scale type to see usable fretboard blocks.</td></tr>
+      <tr><td>Song scale view</td><td>Review the most frequent scale blocks inferred from the whole song.</td></tr>
+      <tr><td>Song analysis</td><td>Read the central scale, repeated progressions, harmonic rhythm, and function distribution.</td></tr>
+      <tr><td>Chord positions</td><td>Click a chord candidate, then filter by root string or chord category.</td></tr>
+      <tr><td>Chord finder</td><td>Select notes on the fretboard to search for matching chord names and shapes.</td></tr>
+    </table>
+  </section>
+
+  <section id="memo">
+    <h2>6. Write Memos</h2>
+    <figure>
+      <img src="images/manual_memo.png" alt="Memo editor screenshot">
+      <figcaption>Memos are saved per measure and can include Markdown text.</figcaption>
+    </figure>
+    <ol class="step-list">
+      <li>Select a measure, then open the lower <b>Memo</b> tab.</li>
+      <li>Write notes in Markdown. Use this for practice comments, fingerings, or lesson notes.</li>
+      <li>Choose <b>File &gt; Save memo</b> or press <span class="kbd">Ctrl</span>+<span class="kbd">S</span>.</li>
+      <li>Use <b>Save memo as</b> to create a separate <code>.mmdx</code> memo package.</li>
+      <li>Use <b>Load memo</b> to attach an existing memo package to the current tab.</li>
+    </ol>
+  </section>
+
+  <section id="recording">
+    <h2>7. Record Practice</h2>
+    <ol class="step-list">
+      <li>Open the right-side <b>Recording</b> tab.</li>
+      <li>Select the microphone or audio interface from <b>Input</b>.</li>
+      <li>Set <b>BPM</b> and <b>Beats</b>. Enable <b>Record click</b> if you want the metronome mixed into the saved file.</li>
+      <li>Press <span class="kbd">F10</span> or the record button to record.</li>
+      <li>Press <span class="kbd">F11</span> to stop.</li>
+      <li>Press <span class="kbd">F12</span> to play the last recording, or use the list to play/delete older recordings.</li>
+    </ol>
+  </section>
+
+  <section id="tuner">
+    <h2>8. Chromatic Tuner</h2>
+    <figure>
+      <img src="images/manual_tuner.png" alt="Chromatic tuner screenshot">
+      <figcaption>The tuner opens in a separate window and uses the selected audio input device.</figcaption>
+    </figure>
+    <ol class="step-list">
+      <li>Choose <b>Additional Features &gt; Chromatic tuner</b>.</li>
+      <li>Select the input device. Use <b>Refresh</b> if you plugged in an audio interface after opening the window.</li>
+      <li>Set <b>Reference A4</b>. Standard tuning uses 440.0 Hz.</li>
+      <li>Choose <b>Single string</b> to tune one string at a time. Select a tuning preset, leave <b>Target string</b> on auto or choose the exact string, then tune until the meter is centered and the status says <b>In tune</b>.</li>
+      <li>Choose <b>All strings</b>, then select the tuning preset such as Standard, Drop D, D Standard, DADGAD, or Open G.</li>
+      <li>Strum all open strings and read each row from the lowest string to the highest string.</li>
+      <li>If a string signal drops out briefly, the last stable position stays visible for a moment as <b>Last signal</b>.</li>
+      <li>Mute unused strings and keep the input level clean. A noisy room, clipping, or heavy effects can reduce detection stability.</li>
+    </ol>
+  </section>
+</main>
+</body>
+</html>

@@ -102,7 +102,7 @@ from ..chord_finder import (
     find_chords_containing_pitches,
 )
 from ..gp_loader import MeasureData, SegmentData, SongData, default_track_index, list_tracks, load_gp_file, retune_song
-from ..i18n import apply_translations, tr
+from ..i18n import apply_translations, current_language, tr
 from ..midi_player import MidiOutput, TICKS_PER_QUARTER, TabMidiPlayer
 from ..scale_blocks import (
     ScaleBlock,
@@ -161,6 +161,7 @@ from .youtube import (
     _youtube_player_url,
     _youtube_video_candidates,
 )
+from .tuner import ChromaticTunerDialog
 
 
 PROJECT_ROOT_PATH = Path(__file__).resolve().parent.parent.parent
@@ -357,6 +358,7 @@ def remove_recent_file(file_path: str | Path, path: str | Path | None = None) ->
 
 APP_ICON_ICO_PATH = PROJECT_ROOT_PATH / "assets" / "app_icon.ico"
 MANUAL_PATH = PROJECT_ROOT_PATH / "docs" / "manual.html"
+MANUAL_EN_PATH = PROJECT_ROOT_PATH / "docs" / "manual_en.html"
 def _mix_metronome_clicks_into_wav(path: Path, bpm: int, beats_per_bar: int) -> bool:
     if not path.exists():
         return False
@@ -6259,6 +6261,7 @@ class TabAnalyzerWindow(QMainWindow):
         self.memo_sync_timer = QTimer(self)
         self.manual_dialog: QDialog | None = None
         self.about_dialog: QDialog | None = None
+        self.tuner_dialog: ChromaticTunerDialog | None = None
         self._preserving_playback_selection = False
         self._load_thread: QThread | None = None
         self._load_worker: _LoadWorker | None = None
@@ -6306,6 +6309,7 @@ class TabAnalyzerWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         file_menu = self.menuBar().addMenu("File")
+        extras_menu = self.menuBar().addMenu("Additional Features")
         help_menu = self.menuBar().addMenu("Help")
 
         toolbar = QToolBar("Main")
@@ -6318,6 +6322,9 @@ class TabAnalyzerWindow(QMainWindow):
         toolbar.addAction(open_action)
         self.recent_files_menu = file_menu.addMenu("Recent files")
         self._refresh_recent_files_menu()
+        close_file_action = QAction("Close file", self)
+        close_file_action.triggered.connect(self._close_file)
+        file_menu.addAction(close_file_action)
         file_menu.addSeparator()
         songsterr_action = QAction("Search Songsterr tabs", self)
         songsterr_action.triggered.connect(self._search_songsterr)
@@ -6339,6 +6346,14 @@ class TabAnalyzerWindow(QMainWindow):
         memo_load_action.setShortcut(QKeySequence("Ctrl+L"))
         memo_load_action.triggered.connect(self._load_memo_from_dialog)
         file_menu.addAction(memo_load_action)
+        file_menu.addSeparator()
+        exit_action = QAction("Exit", self)
+        exit_action.setShortcut(QKeySequence("Alt+F4"))
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+        tuner_action = QAction("Chromatic tuner", self)
+        tuner_action.triggered.connect(self._open_chromatic_tuner)
+        extras_menu.addAction(tuner_action)
         help_action = QAction("Manual", self)
         help_action.triggered.connect(self._open_manual)
         help_menu.addAction(help_action)
@@ -6491,6 +6506,30 @@ class TabAnalyzerWindow(QMainWindow):
             return
         self.current_file = Path(path)
         self._start_load_worker(self.current_file, None, include_tracks=True)
+
+    def _close_file(self) -> None:
+        if self._load_thread is not None and self._load_thread.isRunning():
+            QMessageBox.information(self, tr("Analyzing"), tr("Close the window after tab file analysis finishes."))
+            return
+        if not self._maybe_save_memo_changes():
+            return
+        self.current_file = None
+        self.source_song = None
+        self._set_current_song(None)
+        self.track_combo.blockSignals(True)
+        self.track_combo.clear()
+        self.track_combo.blockSignals(False)
+        self.tuning_combo.blockSignals(True)
+        self.tuning_combo.setCurrentIndex(0)
+        self.tuning_combo.blockSignals(False)
+        self.current_memo_measure_index = None
+        self._load_memo_for_current_file()
+        self._update_theory_panel(None, None, "scale", None)
+        self._update_song_panel()
+        self._update_chord_position_panel(None, None)
+        self.right_tabs.setCurrentIndex(0)
+        self.setWindowTitle("Tab Analyzer")
+        self.statusBar().clearMessage()
 
     def _refresh_recent_files_menu(self) -> None:
         if self.recent_files_menu is None:
@@ -6986,8 +7025,17 @@ class TabAnalyzerWindow(QMainWindow):
             shutil.rmtree(self.memo_asset_dir, ignore_errors=True)
             self.memo_asset_dir = None
 
+    def _manual_path_for_current_language(self) -> Path:
+        language_path = PROJECT_ROOT_PATH / "docs" / f"manual_{current_language()}.html"
+        if language_path.exists():
+            return language_path
+        if MANUAL_EN_PATH.exists():
+            return MANUAL_EN_PATH
+        return MANUAL_PATH
+
     def _open_manual(self) -> None:
-        self._ensure_manual_file()
+        manual_path = self._manual_path_for_current_language()
+        self._ensure_manual_file(manual_path)
         dialog = self.manual_dialog
         if dialog is None:
             dialog = QDialog(self)
@@ -7002,26 +7050,36 @@ class TabAnalyzerWindow(QMainWindow):
             self.manual_dialog = dialog
         browser = self.manual_dialog.findChild(QTextBrowser)
         if browser is not None:
-            browser.setSource(QUrl.fromLocalFile(str(MANUAL_PATH)))
+            browser.setSource(QUrl.fromLocalFile(str(manual_path)))
         self.manual_dialog.show()
         self.manual_dialog.raise_()
         self.manual_dialog.activateWindow()
 
-    def _ensure_manual_file(self) -> None:
-        if MANUAL_PATH.exists():
+    def _ensure_manual_file(self, manual_path: Path) -> None:
+        if manual_path.exists():
             return
-        MANUAL_PATH.parent.mkdir(parents=True, exist_ok=True)
+        manual_path.parent.mkdir(parents=True, exist_ok=True)
         title = tr("Tab Analyzer Manual")
         message = tr("Preparing the manual file.")
-        MANUAL_PATH.write_text(
+        manual_path.write_text(
             f"""<!doctype html>
-<html lang="ko">
+<html lang="{html.escape(current_language())}">
 <head><meta charset="utf-8"><title>{html.escape(title)}</title></head>
 <body><h1>{html.escape(title)}</h1><p>{html.escape(message)}</p></body>
 </html>
 """,
             encoding="utf-8",
         )
+
+    def _open_chromatic_tuner(self) -> None:
+        dialog = self.tuner_dialog
+        if dialog is None:
+            dialog = ChromaticTunerDialog(self)
+            dialog.finished.connect(lambda _result: setattr(self, "tuner_dialog", None))
+            self.tuner_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _open_about(self) -> None:
         dialog = self.about_dialog
@@ -7375,6 +7433,9 @@ class TabAnalyzerWindow(QMainWindow):
             self.tuning_combo.setCurrentIndex(0)
             song = self.source_song
 
+        self._set_current_song(song)
+
+    def _set_current_song(self, song: SongData | None) -> None:
         self.song = song
         self.tab_canvas.set_song(song)
         self.tab_playback_panel.set_song(song)
@@ -7382,7 +7443,7 @@ class TabAnalyzerWindow(QMainWindow):
         self.scale_position_widget.set_song(song)
         self.song_scale_usage_widget.set_song(song)
         self.chord_finder_widget.set_song(song)
-        self._populate_root_string_combo(len(song.track.string_pitches))
+        self._populate_root_string_combo(len(song.track.string_pitches) if song is not None else 6)
 
     def _selected_tuning_preset(self) -> TuningPreset | None:
         preset_id = self.tuning_combo.currentData()
@@ -7603,6 +7664,8 @@ class TabAnalyzerWindow(QMainWindow):
         if not self._maybe_save_memo_changes():
             event.ignore()
             return
+        if self.tuner_dialog is not None:
+            self.tuner_dialog.close()
         self.chord_finder_widget.shutdown()
         self.tab_playback_panel.shutdown()
         self._clear_memo_asset_dir()
