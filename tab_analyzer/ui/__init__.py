@@ -162,6 +162,7 @@ from .youtube import (
     _youtube_video_candidates,
 )
 from .tuner import ChromaticTunerDialog
+from .vst_host import VstHostDialog
 
 
 PROJECT_ROOT_PATH = Path(__file__).resolve().parent.parent.parent
@@ -6262,6 +6263,7 @@ class TabAnalyzerWindow(QMainWindow):
         self.manual_dialog: QDialog | None = None
         self.about_dialog: QDialog | None = None
         self.tuner_dialog: ChromaticTunerDialog | None = None
+        self.vst_host_dialog: VstHostDialog | None = None
         self._preserving_playback_selection = False
         self._load_thread: QThread | None = None
         self._load_worker: _LoadWorker | None = None
@@ -6354,6 +6356,9 @@ class TabAnalyzerWindow(QMainWindow):
         tuner_action = QAction("Chromatic tuner", self)
         tuner_action.triggered.connect(self._open_chromatic_tuner)
         extras_menu.addAction(tuner_action)
+        vst_action = QAction("VST Effect Rack", self)
+        vst_action.triggered.connect(self._open_vst_effect_rack)
+        extras_menu.addAction(vst_action)
         help_action = QAction("Manual", self)
         help_action.triggered.connect(self._open_manual)
         help_menu.addAction(help_action)
@@ -7077,6 +7082,16 @@ class TabAnalyzerWindow(QMainWindow):
             dialog = ChromaticTunerDialog(self)
             dialog.finished.connect(lambda _result: setattr(self, "tuner_dialog", None))
             self.tuner_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _open_vst_effect_rack(self) -> None:
+        dialog = self.vst_host_dialog
+        if dialog is None:
+            dialog = VstHostDialog(self)
+            dialog.finished.connect(lambda _result: setattr(self, "vst_host_dialog", None))
+            self.vst_host_dialog = dialog
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()

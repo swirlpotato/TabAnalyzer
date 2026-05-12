@@ -3,3 +3,6 @@ PyQt6-WebEngine>=6.6
 PyGuitarPro>=0.10.2
 Markdown-Editor>=1.0.7
 numpy>=1.26
+minihost>=0.1.6
+pedalboard>=0.9.22
+sounddevice>=0.5.5

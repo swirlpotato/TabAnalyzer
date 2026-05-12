@@ -39,15 +39,22 @@ The right explanation pane summarizes the whole song: estimated tonal center, re
 
 The main score area has a `Tab player` tab. It shows Guitar Pro-style tablature measures and adds MIDI playback controls:
 
-## Measure memos
+## Chromatic tuner
 
-Measure memos are saved as `.mmdx` packages. An `.mmdx` file is a ZIP archive with one Markdown file per measure, such as `M1.md` or `M25.md`, so headings like `## M26` inside a memo remain normal memo content. Local images referenced from Markdown are copied into the package on save.
+![Chromatic tuner single-string screenshot](docs/images/readme_tuner_single_string.png)
+![Chromatic tuner all-strings screenshot](docs/images/manual_tuner.png)
 
-## Tuning presets
+The `Chromatic tuner` command opens a separate tuner window. Select an audio input device, then press `Start` to monitor the signal. The tuner supports single-string and polyphonic guitar tuning modes, reference A4 adjustment, target string selection, and the built-in tuning presets.
 
-The app reads the tuning stored in the Guitar Pro file by default. The toolbar also includes 10 common six-string tuning presets that can override the file tuning and recalculate the whole analysis:
+## VST Effect Rack
 
-Standard, Drop D, Half-Step Down, D Standard, Drop C, DADGAD, Open G, Open D, Open E, and Open C.
+![VST Effect Rack screenshot](docs/images/readme_vst_effect_rack.png)
+
+The `VST Effect Rack` command routes a selected audio input through a VST effect and sends the processed signal to the selected output. The rack scans common VST folders automatically and shows a progress dialog while searching; use `Add VST file` or `Add VST folder` if a plugin is installed elsewhere.
+
+For low-latency monitoring on Windows, the rack enables `sounddevice` ASIO support before loading audio devices. Choose an ASIO input/output pair such as `Focusrite USB ASIO` when available, then set the buffer size to `64`, `128`, `256`, or `512` samples. Smaller buffers reduce latency but can click or drop out on heavier plugins.
+
+VST3 effects are hosted with `pedalboard` when the plugin UI is available, so plugins such as TONEX can open their native editor. If `pedalboard` cannot load a VST3 effect, the rack falls back to `minihost` for headless processing. VST2 files are listed for visibility, but realtime routing currently requires a VST3 effect.
 
 ## Tests
 
