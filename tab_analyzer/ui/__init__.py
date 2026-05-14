@@ -126,6 +126,7 @@ from ..songsterr import (
     save_details_file,
     save_cookie_header,
     search_tabs,
+    songsterr_page_url,
     update_youtube_default_video,
     update_youtube_sync_offset,
 )
@@ -2717,6 +2718,365 @@ class YouTubeTabPlayer(QObject):
         if end < start:
             start, end = end, start
         return start, end
+
+
+class SongsterrPagePanel(QWidget):
+    playbackPositionChanged = pyqtSignal(object)
+
+    _STAGE_BRIDGE_SCRIPT = """
+(function () {
+    try {
+        Object.defineProperty(window, "__STAGE__", {
+            get: function () { return "tab-analyzer"; },
+            set: function () {},
+            configurable: false
+        });
+        window.__TAB_ANALYZER_SONGSTERR__ = true;
+    } catch (error) {}
+})();
+"""
+
+    _PLAYBACK_STATE_SCRIPT = """
+(function () {
+    const store = window.__store__;
+    if (!store || typeof store.get !== "function") {
+        return { available: false, reason: "store" };
+    }
+    const state = store.get();
+    const cursorState = state && state.cursor && state.cursor.position;
+    const part = state && state.part && state.part.current;
+    const measures = part && Array.isArray(part.measures) ? part.measures : [];
+    const player = state && state.player ? state.player : {};
+    const shouldPlay = !!player.shouldPlay || !!(player.instance && player.instance.isPlaying);
+    if (!cursorState || !measures.length) {
+        return {
+            available: false,
+            reason: "part",
+            shouldPlay: shouldPlay
+        };
+    }
+    let cursorValue = cursorState.cursor;
+    if (player && player.instance && typeof player.instance.getCursor === "function") {
+        const liveCursor = player.instance.getCursor();
+        if (Number.isFinite(Number(liveCursor))) {
+            cursorValue = liveCursor;
+        }
+    }
+    const cursor = Number(cursorValue);
+    if (!Number.isFinite(cursor)) {
+        return { available: false, reason: "cursor", shouldPlay: shouldPlay };
+    }
+    const layoutPlaybackState = function (position) {
+        for (let measureIndex = 0; measureIndex < measures.length; measureIndex += 1) {
+            const measure = measures[measureIndex];
+            const layouts = Array.isArray(measure && measure.layouts) ? measure.layouts : [];
+            const beatLayouts = [];
+            for (const layout of layouts) {
+                const items = Array.isArray(layout && layout.beatsLayouts) ? layout.beatsLayouts : [];
+                for (const item of items) {
+                    if (!item || item.isAddable) {
+                        continue;
+                    }
+                    const duration = Number(item.duration);
+                    const occurrences = Array.isArray(item.occurrences) ? item.occurrences : [];
+                    if (!Number.isFinite(duration) || duration <= 0 || duration > 3600000 || !occurrences.length) {
+                        continue;
+                    }
+                    beatLayouts.push({ item: item, duration: duration, occurrences: occurrences });
+                }
+            }
+            if (!beatLayouts.length) {
+                continue;
+            }
+            const occurrenceCount = Math.max(...beatLayouts.map((beat) => beat.occurrences.length));
+            for (let occurrenceIndex = 0; occurrenceIndex < occurrenceCount; occurrenceIndex += 1) {
+                const firstBeat = beatLayouts[0];
+                const lastBeat = beatLayouts[beatLayouts.length - 1];
+                const start = Number(firstBeat.occurrences[Math.min(occurrenceIndex, firstBeat.occurrences.length - 1)]);
+                const lastStart = Number(lastBeat.occurrences[Math.min(occurrenceIndex, lastBeat.occurrences.length - 1)]);
+                const end = lastStart + lastBeat.duration;
+                if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+                    continue;
+                }
+                if (position >= start && position < end) {
+                    return {
+                available: true,
+                measureIndex: measureIndex,
+                ratio: Math.max(0, Math.min(0.999999, (position - start) / (end - start))),
+                cursor: position,
+                shouldPlay: shouldPlay,
+                speed: Number(player.speed) || 100,
+                source: "layout"
+            };
+                }
+            }
+        }
+        return null;
+    };
+    const durationUnits = function (duration) {
+        if (!Array.isArray(duration) || duration.length < 2) {
+            return 0;
+        }
+        const numerator = Number(duration[0]);
+        const denominator = Number(duration[1]);
+        if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) {
+            return 0;
+        }
+        return Math.max(0, (4 * 960 * numerator) / denominator);
+    };
+    const measureLength = function (measure, signature) {
+        const nextSignature = Array.isArray(measure && measure.signature) ? measure.signature : signature;
+        const voices = Array.isArray(measure && measure.voices) ? measure.voices : [];
+        let longest = 0;
+        for (const voice of voices) {
+            const beats = Array.isArray(voice && voice.beats) ? voice.beats : [];
+            let total = 0;
+            for (const beat of beats) {
+                total += durationUnits(beat && beat.duration);
+            }
+            if (total > longest) {
+                longest = total;
+            }
+        }
+        if (longest > 0) {
+            return { length: longest, signature: nextSignature };
+        }
+        const numerator = Number(nextSignature && nextSignature[0]) || 4;
+        const denominator = Number(nextSignature && nextSignature[1]) || 4;
+        return { length: Math.max(1, (4 * 960 * numerator) / denominator), signature: nextSignature };
+    };
+    const tempoAtMeasure = function (measureIndex) {
+        const automations = part && part.automations && Array.isArray(part.automations.tempo)
+            ? part.automations.tempo
+            : [];
+        let bpm = 120;
+        for (const automation of automations) {
+            const automationMeasure = Number(automation && automation.measure);
+            const automationBpm = Number(automation && automation.bpm);
+            if (Number.isFinite(automationMeasure) && automationMeasure <= measureIndex && Number.isFinite(automationBpm) && automationBpm > 0) {
+                bpm = automationBpm;
+            }
+        }
+        return bpm;
+    };
+    const measureDurationMs = function (measure, signature, measureIndex) {
+        const current = measureLength(measure, signature);
+        const bpm = tempoAtMeasure(measureIndex);
+        return {
+            duration: (current.length / 960) * (60000 / bpm),
+            signature: current.signature
+        };
+    };
+    const beatStartRatio = function (measure, voiceIndex, beatIndex, signature) {
+        const current = measureLength(measure, signature);
+        const length = Math.max(1, current.length);
+        const voices = Array.isArray(measure && measure.voices) ? measure.voices : [];
+        const voice = voices[Math.max(0, voiceIndex)] || voices[0];
+        const beats = Array.isArray(voice && voice.beats) ? voice.beats : [];
+        let start = 0;
+        const end = Math.max(0, Math.min(beatIndex, beats.length));
+        for (let index = 0; index < end; index += 1) {
+            start += durationUnits(beats[index] && beats[index].duration);
+        }
+        return Math.max(0, Math.min(0.999999, start / length));
+    };
+    const editorCursor = state && state.editorUI && Array.isArray(state.editorUI.cursor)
+        && Array.isArray(state.editorUI.cursor[0])
+        ? state.editorUI.cursor[0]
+        : null;
+    if (!shouldPlay && editorCursor) {
+        const editorMeasureIndex = Number(editorCursor[1]);
+        if (Number.isInteger(editorMeasureIndex) && editorMeasureIndex >= 0 && editorMeasureIndex < measures.length) {
+            const editorVoiceIndex = Number.isInteger(Number(editorCursor[2])) ? Number(editorCursor[2]) : 0;
+            const editorBeatIndex = Number.isInteger(Number(editorCursor[3])) ? Number(editorCursor[3]) : 0;
+            return {
+                available: true,
+                measureIndex: editorMeasureIndex,
+                ratio: beatStartRatio(measures[editorMeasureIndex], editorVoiceIndex, editorBeatIndex, [4, 4]),
+                cursor: cursor,
+                shouldPlay: shouldPlay,
+                speed: Number(player.speed) || 100,
+                source: "editor"
+            };
+        }
+    }
+    if (shouldPlay) {
+        const layoutState = layoutPlaybackState(cursor);
+        if (layoutState) {
+            return layoutState;
+        }
+    }
+    let signature = [4, 4];
+    let start = 0;
+    const position = Math.max(0, cursor);
+    for (let index = 0; index < measures.length; index += 1) {
+        const current = measureDurationMs(measures[index], signature, index);
+        signature = current.signature;
+        const length = Math.max(1, current.duration);
+        const isLast = index === measures.length - 1;
+        if (position < start + length || isLast) {
+            const ratio = Math.max(0, Math.min(0.999999, (position - start) / length));
+            return {
+                available: true,
+                measureIndex: index,
+                ratio: ratio,
+                cursor: position,
+                shouldPlay: shouldPlay,
+                speed: Number(player.speed) || 100,
+                source: "timeline"
+            };
+        }
+        start += length;
+    }
+    return { available: false, reason: "range", shouldPlay: shouldPlay };
+})();
+"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._url = ""
+        self._web_profile = None
+        self.view = None
+        self._poll_in_flight = False
+        self._last_state_key: tuple[int, int, bool] | None = None
+        self._poll_timer = QTimer(self)
+        self._poll_timer.setInterval(90)
+        self._poll_timer.timeout.connect(self._poll_playback_state)
+        self.fallback_browser = QTextBrowser()
+        self.fallback_browser.setOpenExternalLinks(True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        if self._load_web_engine():
+            layout.addWidget(self.view, 1)
+        else:
+            layout.addWidget(self.fallback_browser, 1)
+            self._update_fallback_html()
+
+    def set_url(self, url: str) -> None:
+        target = str(url or "").strip()
+        if target == self._url:
+            return
+        self._url = target
+        self._last_state_key = None
+        self._poll_in_flight = False
+        if self.view is not None:
+            if target:
+                self.view.load(QUrl(target))
+                self._poll_timer.start()
+            else:
+                self._poll_timer.stop()
+                self.view.setHtml("")
+                self.playbackPositionChanged.emit(None)
+            return
+        self._poll_timer.stop()
+        self.playbackPositionChanged.emit(None)
+        self._update_fallback_html()
+
+    def current_url(self) -> str:
+        return self._url
+
+    def shutdown(self) -> None:
+        self._poll_timer.stop()
+        if self.view is None:
+            return
+        try:
+            self.view.stop()
+        except RuntimeError:
+            return
+
+    def _load_web_engine(self) -> bool:
+        try:
+            from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
+            from PyQt6.QtWebEngineWidgets import QWebEngineView
+        except Exception:
+            return False
+
+        try:
+            storage_root = Path.home() / ".tab_analyzer" / "songsterr_web_sessions"
+            storage_root.mkdir(parents=True, exist_ok=True)
+            profile = QWebEngineProfile(f"tab-analyzer-songsterr-page-{os.getpid()}-{id(self)}", self)
+            profile.setPersistentStoragePath(str(storage_root))
+            profile.setCachePath(str(storage_root / "page_cache"))
+            profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
+            try:
+                from PyQt6.QtWebEngineCore import QWebEngineScript
+
+                bridge_script = QWebEngineScript()
+                bridge_script.setName("TabAnalyzerSongsterrBridge")
+                bridge_script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+                bridge_script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+                bridge_script.setRunsOnSubFrames(False)
+                bridge_script.setSourceCode(self._STAGE_BRIDGE_SCRIPT)
+                profile.scripts().insert(bridge_script)
+            except Exception:
+                pass
+            self._web_profile = profile
+            self.view = QWebEngineView(self)
+            self.view.setPage(QWebEnginePage(profile, self.view))
+        except Exception:
+            self._web_profile = None
+            self.view = None
+            return False
+        return True
+
+    def _poll_playback_state(self) -> None:
+        if self.view is None or not self._url or self._poll_in_flight:
+            return
+        try:
+            page = self.view.page()
+        except RuntimeError:
+            self._poll_timer.stop()
+            return
+        self._poll_in_flight = True
+        try:
+            page.runJavaScript(self._PLAYBACK_STATE_SCRIPT, self._on_playback_state_polled)
+        except RuntimeError:
+            self._poll_in_flight = False
+            self._poll_timer.stop()
+
+    def _on_playback_state_polled(self, state: object) -> None:
+        self._poll_in_flight = False
+        if not isinstance(state, dict) or not state.get("available"):
+            should_play = bool(state.get("shouldPlay")) if isinstance(state, dict) else False
+            key = (-1, -1, should_play)
+            if key != self._last_state_key:
+                self._last_state_key = key
+                self.playbackPositionChanged.emit(None)
+            return
+
+        try:
+            measure_index = int(state.get("measureIndex", 0))
+            ratio = float(state.get("ratio", 0.0))
+        except (TypeError, ValueError):
+            return
+        should_play = bool(state.get("shouldPlay"))
+        tick_bucket = int(max(0.0, min(0.999999, ratio)) * 3840)
+        key = (measure_index, tick_bucket, should_play)
+        if key == self._last_state_key:
+            return
+        self._last_state_key = key
+        self.playbackPositionChanged.emit(
+            {
+                "measureIndex": measure_index,
+                "ratio": ratio,
+                "shouldPlay": should_play,
+            }
+        )
+
+    def _update_fallback_html(self) -> None:
+        if not self._url:
+            self.fallback_browser.setHtml("")
+            return
+        safe_url = html.escape(self._url, quote=True)
+        safe_text = html.escape(self._url)
+        self.fallback_browser.setHtml(
+            "<div style='font-family: Segoe UI, sans-serif; font-size: 12pt; padding: 20px;'>"
+            "<p>PyQt6-WebEngine is unavailable, so the Songsterr page can be opened in an external browser.</p>"
+            f"<p><a href='{safe_url}'>{safe_text}</a></p>"
+            "</div>"
+        )
 
 
 class MemoEditorWidget(QWidget):
@@ -6215,7 +6575,9 @@ class TabAnalyzerWindow(QMainWindow):
         self.analysis_scroll = QScrollArea()
         self.analysis_tab_index = -1
         self.tab_playback_tab_index = -1
+        self.songsterr_tab_index = -1
         self.tab_playback_panel = TabPlaybackPanel()
+        self.songsterr_panel = SongsterrPagePanel()
         self.fretboard = FretboardWidget()
         self.scale_position_widget = ScalePositionWidget()
         self.scale_position_panel = QWidget()
@@ -6265,6 +6627,11 @@ class TabAnalyzerWindow(QMainWindow):
         self.tuner_dialog: ChromaticTunerDialog | None = None
         self.vst_host_dialog: VstHostDialog | None = None
         self._preserving_playback_selection = False
+        self._songsterr_playback_measure_index: int | None = None
+        self._songsterr_playback_base_tick: int | None = None
+        self._songsterr_playback_speed_percent = 100.0
+        self._songsterr_playback_clock = QElapsedTimer()
+        self._songsterr_playback_tick_timer = QTimer(self)
         self._load_thread: QThread | None = None
         self._load_worker: _LoadWorker | None = None
         self._load_progress_dialog: AnalysisProgressDialog | None = None
@@ -6279,6 +6646,9 @@ class TabAnalyzerWindow(QMainWindow):
         self.tab_playback_panel.selectionChanged.connect(self._on_tab_block_selection_changed)
         self.tab_playback_panel.playbackMeasureChanged.connect(self._on_tab_playback_measure_changed)
         self.tab_playback_panel.playbackTickChanged.connect(self.fretboard.set_playback_tick)
+        self.songsterr_panel.playbackPositionChanged.connect(self._on_songsterr_playback_position_changed)
+        self._songsterr_playback_tick_timer.setInterval(25)
+        self._songsterr_playback_tick_timer.timeout.connect(self._advance_songsterr_playback_tick)
         self.tab_canvas.zoomWheelRequested.connect(self._adjust_zoom_by_delta)
         self.tab_playback_panel.zoomWheelRequested.connect(self._adjust_zoom_by_delta)
         self.analysis_scroll.viewport().installEventFilter(self)
@@ -7346,7 +7716,7 @@ class TabAnalyzerWindow(QMainWindow):
         self.zoom_label.setText(f"{value}%")
         if self.top_tabs.currentIndex() == self.tab_playback_tab_index:
             self.tab_playback_panel.set_zoom(value / 100)
-        else:
+        elif self.top_tabs.currentIndex() == self.analysis_tab_index:
             self.tab_canvas.set_zoom(value / 100)
 
     def _adjust_zoom_by_delta(self, delta: int) -> None:
@@ -7386,6 +7756,7 @@ class TabAnalyzerWindow(QMainWindow):
             return
 
         if index == self.analysis_tab_index:
+            self._stop_songsterr_tick_interpolation()
             self.tab_playback_panel.stop_playback()
             self._set_toolbar_zoom_percent(round(self.tab_canvas.zoom * 100))
             measure_index = self.tab_playback_panel.current_measure_index()
@@ -7398,9 +7769,17 @@ class TabAnalyzerWindow(QMainWindow):
             return
 
         if index == self.tab_playback_tab_index:
+            self._songsterr_playback_measure_index = None
+            self._stop_songsterr_tick_interpolation()
+            self.fretboard.set_playback_tick(None)
             self._set_toolbar_zoom_percent(self.tab_playback_panel.zoom_percent())
             measure_index = self.tab_playback_panel.current_measure_index()
             QTimer.singleShot(0, lambda item=measure_index: self.tab_playback_panel.scroll_measure_into_view(item))
+            return
+
+        if index == self.songsterr_tab_index:
+            self._songsterr_playback_measure_index = None
+            self.tab_playback_panel.stop_playback()
 
     def _scroll_analysis_measure_into_view(self, measure_index: int) -> None:
         layout = self.tab_canvas.layout_for_measure(measure_index)
@@ -7452,13 +7831,39 @@ class TabAnalyzerWindow(QMainWindow):
 
     def _set_current_song(self, song: SongData | None) -> None:
         self.song = song
+        self._songsterr_playback_measure_index = None
+        self._stop_songsterr_tick_interpolation()
         self.tab_canvas.set_song(song)
         self.tab_playback_panel.set_song(song)
+        self._update_songsterr_tab(song)
         self.fretboard.set_song(song)
         self.scale_position_widget.set_song(song)
         self.song_scale_usage_widget.set_song(song)
         self.chord_finder_widget.set_song(song)
         self._populate_root_string_combo(len(song.track.string_pitches) if song is not None else 6)
+
+    def _update_songsterr_tab(self, song: SongData | None) -> None:
+        details = load_details_file(song.path) if song is not None else {}
+        url = songsterr_page_url(details)
+        if not url:
+            self._hide_songsterr_tab()
+            return
+        self.songsterr_panel.set_url(url)
+        index = self.top_tabs.indexOf(self.songsterr_panel)
+        if index < 0:
+            index = self.top_tabs.addTab(self.songsterr_panel, "Songsterr")
+        else:
+            self.top_tabs.setTabText(index, "Songsterr")
+        self.songsterr_tab_index = index
+
+    def _hide_songsterr_tab(self) -> None:
+        index = self.top_tabs.indexOf(self.songsterr_panel)
+        if index >= 0:
+            self.top_tabs.removeTab(index)
+        self.songsterr_tab_index = -1
+        self._songsterr_playback_measure_index = None
+        self._stop_songsterr_tick_interpolation()
+        self.songsterr_panel.set_url("")
 
     def _selected_tuning_preset(self) -> TuningPreset | None:
         preset_id = self.tuning_combo.currentData()
@@ -7629,13 +8034,145 @@ class TabAnalyzerWindow(QMainWindow):
             self.statusBar().showMessage(_trf("M{start}-M{end}: tab block selected", start=first_measure.number, end=measures[end].number))
 
     def _on_tab_playback_measure_changed(self, measure_index: int) -> None:
+        self._select_fretboard_scale_measure(measure_index)
+
+    def _select_fretboard_scale_measure(self, measure_index: int) -> MeasureData | None:
         if self.song is None or not self.song.track.measures:
-            return
+            return None
         measures = self.song.track.measures
         measure_index = max(0, min(measure_index, len(measures) - 1))
         measure = measures[measure_index]
         candidate = measure.analysis.scale_candidates[0] if measure.analysis.scale_candidates else None
         self.fretboard.set_selection(measure, candidate, "scale", None)
+        return measure
+
+    def _on_songsterr_playback_position_changed(self, state: object) -> None:
+        if self.song is None or not self.song.track.measures:
+            return
+        if self.songsterr_tab_index < 0 or self.top_tabs.currentIndex() != self.songsterr_tab_index:
+            return
+        if not isinstance(state, dict):
+            self._songsterr_playback_measure_index = None
+            self._stop_songsterr_tick_interpolation()
+            self.fretboard.set_playback_tick(None)
+            return
+
+        try:
+            measure_index = int(state.get("measureIndex", 0))
+            ratio = float(state.get("ratio", 0.0))
+        except (TypeError, ValueError):
+            return
+
+        measures = self.song.track.measures
+        if bool(state.get("shouldPlay")) and state.get("source") == "time":
+            tick_from_time = self._songsterr_playback_tick_from_state(state)
+            if tick_from_time is not None:
+                measure_index = self._measure_index_for_playback_tick(tick_from_time)
+                measure = measures[measure_index]
+                if self._songsterr_playback_measure_index != measure_index or self.fretboard.measure is not measure:
+                    self._songsterr_playback_measure_index = measure_index
+                    self._select_fretboard_scale_measure(measure_index)
+                self._set_songsterr_playback_tick(tick_from_time, state)
+                return
+
+        measure_index = max(0, min(measure_index, len(measures) - 1))
+        measure = measures[measure_index]
+        if self._songsterr_playback_measure_index != measure_index or self.fretboard.measure is not measure:
+            self._songsterr_playback_measure_index = measure_index
+            self._select_fretboard_scale_measure(measure_index)
+
+        if not bool(state.get("shouldPlay")):
+            self._stop_songsterr_tick_interpolation()
+            self.fretboard.set_playback_tick(None)
+            return
+
+        ratio = max(0.0, min(0.999999, ratio))
+        local_offset = int(round(ratio * measure.length_ticks))
+        local_offset = max(0, min(local_offset, max(0, measure.length_ticks - 1)))
+        self._set_songsterr_playback_tick(measure.start_tick + local_offset, state)
+
+    def _set_songsterr_playback_tick(self, tick: int, state: dict) -> None:
+        self.fretboard.set_playback_tick(tick)
+        self._songsterr_playback_base_tick = tick
+        self._songsterr_playback_speed_percent = self._songsterr_speed_percent_from_state(state)
+        self._songsterr_playback_clock.restart()
+        if not self._songsterr_playback_tick_timer.isActive():
+            self._songsterr_playback_tick_timer.start()
+
+    def _songsterr_speed_percent_from_state(self, state: dict) -> float:
+        try:
+            speed = float(state.get("speed", 100))
+        except (TypeError, ValueError):
+            return 100.0
+        return max(15.0, min(200.0, speed))
+
+    def _stop_songsterr_tick_interpolation(self) -> None:
+        self._songsterr_playback_tick_timer.stop()
+        self._songsterr_playback_base_tick = None
+        self._songsterr_playback_speed_percent = 100.0
+
+    def _advance_songsterr_playback_tick(self) -> None:
+        if self.song is None or not self.song.track.measures:
+            self._stop_songsterr_tick_interpolation()
+            return
+        if self.songsterr_tab_index < 0 or self.top_tabs.currentIndex() != self.songsterr_tab_index:
+            self._stop_songsterr_tick_interpolation()
+            return
+        tick = self._songsterr_interpolated_playback_tick()
+        if tick is None:
+            return
+        measure_index = self._measure_index_for_playback_tick(tick)
+        measure = self.song.track.measures[measure_index]
+        if self._songsterr_playback_measure_index != measure_index or self.fretboard.measure is not measure:
+            self._songsterr_playback_measure_index = measure_index
+            self._select_fretboard_scale_measure(measure_index)
+        self.fretboard.set_playback_tick(tick)
+
+    def _songsterr_interpolated_playback_tick(self, elapsed_ms: int | None = None) -> int | None:
+        if self.song is None or self._songsterr_playback_base_tick is None or not self.song.track.measures:
+            return None
+        if elapsed_ms is None:
+            elapsed_ms = self._songsterr_playback_clock.elapsed()
+        ticks_per_ms = (
+            self.song.tempo
+            * (self._songsterr_playback_speed_percent / 100.0)
+            * TICKS_PER_QUARTER
+            / 60000.0
+        )
+        tick = int(round(self._songsterr_playback_base_tick + max(0, elapsed_ms) * ticks_per_ms))
+        measures = self.song.track.measures
+        first_tick = measures[0].start_tick
+        last_tick = measures[-1].start_tick + max(1, measures[-1].length_ticks) - 1
+        return max(first_tick, min(tick, last_tick))
+
+    def _songsterr_playback_tick_from_state(self, state: dict) -> int | None:
+        if self.song is None or not self.song.track.measures:
+            return None
+        cursor_ms = state.get("cursorMs")
+        if cursor_ms is None:
+            return None
+        try:
+            milliseconds = float(cursor_ms)
+        except (TypeError, ValueError):
+            return None
+        if milliseconds < 0:
+            return None
+        tick = int(round(milliseconds * self.song.tempo * TICKS_PER_QUARTER / 60000.0))
+        measures = self.song.track.measures
+        first_tick = measures[0].start_tick
+        last_tick = measures[-1].start_tick + max(1, measures[-1].length_ticks) - 1
+        return max(first_tick, min(tick, last_tick))
+
+    def _measure_index_for_playback_tick(self, tick: int) -> int:
+        if self.song is None or not self.song.track.measures:
+            return 0
+        measures = self.song.track.measures
+        for index, measure in enumerate(measures):
+            start_tick = measure.start_tick
+            end_tick = measure.start_tick + measure.length_ticks
+            if start_tick <= tick < end_tick:
+                return index
+        return len(measures) - 1 if tick >= measures[-1].start_tick else 0
 
     def _measure_index(self, measure: MeasureData) -> int | None:
         if self.song is None:
@@ -7682,7 +8219,9 @@ class TabAnalyzerWindow(QMainWindow):
         if self.tuner_dialog is not None:
             self.tuner_dialog.close()
         self.chord_finder_widget.shutdown()
+        self._stop_songsterr_tick_interpolation()
         self.tab_playback_panel.shutdown()
+        self.songsterr_panel.shutdown()
         self._clear_memo_asset_dir()
         super().closeEvent(event)
 

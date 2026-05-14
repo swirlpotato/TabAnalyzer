@@ -14,6 +14,7 @@ from tab_analyzer.songsterr import (
     load_cookie_header,
     save_details_file,
     save_cookie_header,
+    songsterr_page_url,
     update_youtube_default_video,
     update_youtube_sync_offset,
 )
@@ -138,6 +139,63 @@ class SongsterrParsingTests(unittest.TestCase):
         self.assertEqual(details["youtube"]["default_video_id"], "main456")
         self.assertEqual(details["youtube"]["videos"][0]["url"], "https://www.youtube.com/watch?v=backing123")
         self.assertEqual(details["youtube"]["sync"]["offset_seconds"], 0.0)
+
+    def test_songsterr_page_url_uses_saved_songsterr_url(self):
+        details = {
+            "source": "songsterr",
+            "songsterr": {
+                "song_id": 270,
+                "url": "https://www.songsterr.com/a/wsa/queen-bohemian-rhapsody-tab-s270",
+            },
+        }
+
+        self.assertEqual(
+            songsterr_page_url(details),
+            "https://www.songsterr.com/a/wsa/queen-bohemian-rhapsody-tab-s270",
+        )
+
+    def test_songsterr_page_url_pins_downloaded_revision_and_track(self):
+        details = {
+            "source": "songsterr",
+            "songsterr": {
+                "song_id": 1024,
+                "revision_id": 6673560,
+                "default_track": 2,
+                "url": "https://www.songsterr.com/a/wsa/ac-dc-back-in-black-tab-s1024",
+            },
+        }
+
+        self.assertEqual(
+            songsterr_page_url(details),
+            "https://www.songsterr.com/a/wsa/ac-dc-back-in-black-tab-s1024/r6673560?track=2",
+        )
+
+    def test_songsterr_page_url_replaces_stale_revision_in_saved_url(self):
+        details = {
+            "source": "songsterr",
+            "songsterr": {
+                "song_id": 1024,
+                "revision_id": 6673560,
+                "default_track": 2,
+                "url": "https://www.songsterr.com/a/wsa/ac-dc-back-in-black-tab-s1024/r6747614?view=compact&track=5",
+            },
+        }
+
+        self.assertEqual(
+            songsterr_page_url(details),
+            "https://www.songsterr.com/a/wsa/ac-dc-back-in-black-tab-s1024/r6673560?view=compact&track=2",
+        )
+
+    def test_songsterr_page_url_rejects_non_songsterr_hosts(self):
+        details = {
+            "source": "songsterr",
+            "songsterr": {
+                "song_id": 270,
+                "url": "https://songsterr.com.example.com/a/wsa/bad-tab-s270",
+            },
+        }
+
+        self.assertEqual(songsterr_page_url(details), "https://www.songsterr.com/a/wsa/songsterr-tab-s270")
 
     def test_youtube_video_parser_prefers_main_done_video(self):
         videos = _youtube_videos(

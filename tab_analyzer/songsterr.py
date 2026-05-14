@@ -153,6 +153,25 @@ def load_details_file(path: str | Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def songsterr_page_url(details: dict) -> str:
+    if not isinstance(details, dict):
+        return ""
+    songsterr = details.get("songsterr")
+    if not isinstance(songsterr, dict):
+        return ""
+    source = str(details.get("source") or "").strip().lower()
+    if source and source != "songsterr":
+        return ""
+
+    url = _safe_songsterr_url(songsterr.get("url"))
+    if not url:
+        song_id = _as_int(songsterr.get("song_id") or songsterr.get("songId"))
+        if song_id is None:
+            return ""
+        url = f"{SONGSTERR_BASE_URL}/a/wsa/songsterr-tab-s{song_id}"
+    return _songsterr_playback_url(url, songsterr)
+
+
 def save_details_file(path: str | Path, details: dict) -> Path:
     details_path = details_path_for_gp(path)
     details_path.write_text(json.dumps(details, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -509,6 +528,56 @@ def _unique_path(path: Path) -> Path:
 def _fallback_song_url(raw: dict, song_id: int) -> str:
     slug = _slugify(f"{raw.get('artist', '')}-{raw.get('title', '')}")
     return f"{SONGSTERR_BASE_URL}/a/wsa/{slug}-tab-s{song_id}"
+
+
+def _safe_songsterr_url(value: object) -> str:
+    url = str(value or "").strip()
+    if not url:
+        return ""
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.hostname or ""
+    if parsed.scheme not in {"http", "https"}:
+        return ""
+    if host != "songsterr.com" and not host.endswith(".songsterr.com"):
+        return ""
+    return url
+
+
+def _songsterr_playback_url(url: str, songsterr: dict) -> str:
+    parsed = urllib.parse.urlparse(url)
+    path = (parsed.path or "").rstrip("/")
+    revision_id = _as_int(songsterr.get("revision_id") or songsterr.get("revisionId"))
+    if revision_id is not None:
+        if re.search(r"/r\d+(?=$|/)", path):
+            path = re.sub(r"/r\d+(?=$|/)", f"/r{revision_id}", path, count=1)
+        else:
+            path = f"{path}/r{revision_id}"
+
+    query_items = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    track = None
+    for key in ("default_track", "defaultTrack", "popular_track", "popularTrack"):
+        track = _as_int(songsterr.get(key))
+        if track is not None:
+            break
+    if track is not None:
+        track_text = str(track)
+        for index, (key, _value) in enumerate(query_items):
+            if key == "track":
+                query_items[index] = (key, track_text)
+                break
+        else:
+            query_items.append(("track", track_text))
+
+    return urllib.parse.urlunparse(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            path,
+            parsed.params,
+            urllib.parse.urlencode(query_items),
+            parsed.fragment,
+        )
+    )
 
 
 def _slugify(value: str) -> str:
