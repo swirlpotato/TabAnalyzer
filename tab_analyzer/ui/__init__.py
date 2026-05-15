@@ -171,6 +171,48 @@ SONGSTERR_DOWNLOAD_DIR = PROJECT_ROOT_PATH / "Downloads"
 RECENT_FILES_PATH = COOKIE_STORE_PATH.with_name("recent_files.json")
 MAX_RECENT_FILES = 10
 ABOUT_URL = "https://github.com/swirlpotato/TabAnalyzer"
+SONGSTERR_AD_HOST_SUFFIXES = (
+    "2mdn.net",
+    "aaxads.com",
+    "adform.net",
+    "adnxs.com",
+    "adsafeprotected.com",
+    "adsrvr.org",
+    "amazon-adsystem.com",
+    "casalemedia.com",
+    "criteo.com",
+    "criteo.net",
+    "doubleclick.net",
+    "googlesyndication.com",
+    "googletagmanager.com",
+    "googletagservices.com",
+    "lijit.com",
+    "media.net",
+    "moatads.com",
+    "openx.net",
+    "outbrain.com",
+    "pubmatic.com",
+    "quantserve.com",
+    "rubiconproject.com",
+    "scorecardresearch.com",
+    "smartadserver.com",
+    "taboola.com",
+    "yieldmo.com",
+)
+SONGSTERR_AD_HOSTS = {
+    "adservice.google.com",
+    "fundingchoicesmessages.google.com",
+    "imasdk.googleapis.com",
+}
+
+
+def _is_songsterr_ad_request_host(host: str) -> bool:
+    normalized = str(host or "").strip().lower().rstrip(".")
+    if not normalized:
+        return False
+    if normalized in SONGSTERR_AD_HOSTS:
+        return True
+    return any(normalized == suffix or normalized.endswith(f".{suffix}") for suffix in SONGSTERR_AD_HOST_SUFFIXES)
 
 
 def _trf(template: str, **values: object) -> str:
@@ -2736,6 +2778,281 @@ class SongsterrPagePanel(QWidget):
 })();
 """
 
+    _AD_CLEANUP_SCRIPT = r"""
+(function () {
+    if (window.__TAB_ANALYZER_SONGSTERR_AD_CLEANUP__) {
+        return;
+    }
+    window.__TAB_ANALYZER_SONGSTERR_AD_CLEANUP__ = true;
+
+    const STYLE_ID = "tab-analyzer-songsterr-ad-cleanup-style";
+    const AD_HOST_PATTERN = /(2mdn\.net|aaxads\.com|adform\.net|adnxs\.com|adsafeprotected\.com|adsrvr\.org|adservice\.google\.com|amazon-adsystem\.com|casalemedia\.com|criteo\.com|criteo\.net|doubleclick\.net|fundingchoicesmessages\.google\.com|googlesyndication\.com|googletagmanager\.com|googletagservices\.com|imasdk\.googleapis\.com|lijit\.com|media\.net|moatads\.com|openx\.net|outbrain\.com|pubmatic\.com|quantserve\.com|rubiconproject\.com|scorecardresearch\.com|smartadserver\.com|taboola\.com|yieldmo\.com)/i;
+    const AD_TOKEN_PATTERN = /(^|[\s_-])(ad|ads|advert|advertisement|adslot|ad-unit|adunit|ad-container|adcontainer|ad-banner|adbanner|gpt-ad|adsbygoogle|google-auto-placed)([\s_-]|$)/i;
+    const AD_IFRAME_SELECTOR = [
+        'iframe[src*="2mdn.net"]',
+        'iframe[src*="adform.net"]',
+        'iframe[src*="adnxs.com"]',
+        'iframe[src*="adsafeprotected.com"]',
+        'iframe[src*="adsrvr.org"]',
+        'iframe[src*="amazon-adsystem.com"]',
+        'iframe[src*="criteo.com"]',
+        'iframe[src*="doubleclick.net"]',
+        'iframe[src*="googlesyndication.com"]',
+        'iframe[src*="googletagservices.com"]',
+        'iframe[src*="openx.net"]',
+        'iframe[src*="pubmatic.com"]',
+        'iframe[src*="rubiconproject.com"]',
+        'iframe[src*="smartadserver.com"]'
+    ].join(',');
+    const HIDE_SELECTOR = [
+        'ins.adsbygoogle',
+        '.adsbygoogle',
+        '.google-auto-placed',
+        '[id^="google_ads_iframe_"]',
+        '[id*="div-gpt-ad"]',
+        '[data-ad-client]',
+        '[data-ad-slot]',
+        AD_IFRAME_SELECTOR,
+        '.video-ads',
+        '.ytp-ad-image-overlay',
+        '.ytp-ad-module',
+        '.ytp-ad-overlay-container',
+        '.ytp-ad-player-overlay',
+        '.ytp-ad-text-overlay'
+    ].join(',');
+    const PROTECTED_SELECTOR = [
+        '#apptab',
+        '#tablature',
+        '#tablist'
+    ].join(',');
+    const COLLAPSED_STYLE_PROPS = [
+        "display",
+        "visibility",
+        "opacity",
+        "pointer-events",
+        "width",
+        "height",
+        "min-width",
+        "min-height",
+        "max-width",
+        "max-height",
+        "margin",
+        "padding",
+        "border",
+        "overflow"
+    ];
+    const COLLAPSE_CSS = `
+${HIDE_SELECTOR} {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    width: 0 !important;
+    height: 0 !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    max-width: 0 !important;
+    max-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    overflow: hidden !important;
+}
+`;
+
+    function installStyle() {
+        const root = document.head || document.documentElement;
+        if (!root || document.getElementById(STYLE_ID)) {
+            return;
+        }
+        const style = document.createElement("style");
+        style.id = STYLE_ID;
+        style.textContent = COLLAPSE_CSS;
+        root.appendChild(style);
+    }
+
+    function attrString(element) {
+        if (!element) {
+            return "";
+        }
+        const className = typeof element.className === "string"
+            ? element.className
+            : String(element.getAttribute("class") || "");
+        return [
+            element.id,
+            className,
+            element.getAttribute("aria-label"),
+            element.getAttribute("data-ad-client"),
+            element.getAttribute("data-ad-format"),
+            element.getAttribute("data-ad-slot"),
+            element.getAttribute("data-google-query-id")
+        ].filter(Boolean).join(" ");
+    }
+
+    function srcLooksLikeAd(element) {
+        const src = String(
+            element.getAttribute("src")
+            || element.getAttribute("data-src")
+            || element.getAttribute("href")
+            || ""
+        );
+        return AD_HOST_PATTERN.test(src);
+    }
+
+    function hasAdToken(element) {
+        return AD_TOKEN_PATTERN.test(attrString(element));
+    }
+
+    function containsAdFrame(element) {
+        try {
+            return !!element.querySelector(AD_IFRAME_SELECTOR);
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function isProtectedSongsterrContent(element) {
+        if (!element) {
+            return false;
+        }
+        try {
+            return !!(
+                element.closest(PROTECTED_SELECTOR)
+                || (element.matches(PROTECTED_SELECTOR))
+                || element.querySelector(PROTECTED_SELECTOR)
+            );
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function isBottomAdSlot(element) {
+        if (!element || element === document.body || element === document.documentElement) {
+            return false;
+        }
+        const rect = element.getBoundingClientRect();
+        if (!rect || rect.width < 20 || rect.height < 12 || rect.height > window.innerHeight * 0.5) {
+            return false;
+        }
+        const style = window.getComputedStyle(element);
+        const isAnchored = style.position === "fixed" || style.position === "sticky";
+        const isNearBottom = rect.top >= window.innerHeight * 0.45 || Math.abs(window.innerHeight - rect.bottom) <= 180;
+        return isAnchored && isNearBottom && (hasAdToken(element) || containsAdFrame(element));
+    }
+
+    function collapseElement(element) {
+        if (!element || element === document.body || element === document.documentElement || isProtectedSongsterrContent(element)) {
+            return;
+        }
+        element.setAttribute("data-tab-analyzer-ad-hidden", "1");
+        element.style.setProperty("display", "none", "important");
+        element.style.setProperty("visibility", "hidden", "important");
+        element.style.setProperty("opacity", "0", "important");
+        element.style.setProperty("pointer-events", "none", "important");
+        element.style.setProperty("width", "0", "important");
+        element.style.setProperty("height", "0", "important");
+        element.style.setProperty("min-width", "0", "important");
+        element.style.setProperty("min-height", "0", "important");
+        element.style.setProperty("max-width", "0", "important");
+        element.style.setProperty("max-height", "0", "important");
+        element.style.setProperty("margin", "0", "important");
+        element.style.setProperty("padding", "0", "important");
+        element.style.setProperty("border", "0", "important");
+        element.style.setProperty("overflow", "hidden", "important");
+    }
+
+    function adRootFor(element) {
+        let root = element;
+        for (let depth = 0; depth < 4; depth += 1) {
+            const parent = root && root.parentElement;
+            if (!parent || parent === document.body || parent === document.documentElement) {
+                break;
+            }
+            if (isProtectedSongsterrContent(parent)) {
+                break;
+            }
+            const rect = parent.getBoundingClientRect();
+            const compactWrapper = rect.height <= 360 && rect.width <= Math.max(window.innerWidth, 720)
+                && (parent.children.length <= 4 || hasAdToken(parent) || containsAdFrame(parent));
+            if (hasAdToken(parent) || parent.matches(".adsbygoogle, .google-auto-placed") || compactWrapper) {
+                root = parent;
+                continue;
+            }
+            break;
+        }
+        return root || element;
+    }
+
+    function hide(element) {
+        const root = adRootFor(element);
+        if (!isProtectedSongsterrContent(root)) {
+            collapseElement(root);
+        }
+    }
+
+    function restoreCollapsedElement(element) {
+        if (!element || element === document.body || element === document.documentElement) {
+            return;
+        }
+        if (element.getAttribute("data-tab-analyzer-ad-hidden") !== "1") {
+            return;
+        }
+        element.removeAttribute("data-tab-analyzer-ad-hidden");
+        COLLAPSED_STYLE_PROPS.forEach((property) => {
+            element.style.removeProperty(property);
+        });
+    }
+
+    function restoreProtectedContent() {
+        try {
+            document.querySelectorAll(PROTECTED_SELECTOR).forEach((protectedElement) => {
+                let current = protectedElement;
+                while (current && current !== document.body && current !== document.documentElement) {
+                    restoreCollapsedElement(current);
+                    current = current.parentElement;
+                }
+                protectedElement.querySelectorAll('[data-tab-analyzer-ad-hidden="1"]').forEach(restoreCollapsedElement);
+            });
+        } catch (error) {}
+    }
+
+    function cleanupAds() {
+        installStyle();
+        try {
+            document.querySelectorAll(HIDE_SELECTOR).forEach(hide);
+            document.querySelectorAll("iframe, ins, aside, section, div").forEach((element) => {
+                if (srcLooksLikeAd(element) || hasAdToken(element) || containsAdFrame(element) || isBottomAdSlot(element)) {
+                    hide(element);
+                }
+            });
+            restoreProtectedContent();
+        } catch (error) {}
+    }
+
+    let cleanupScheduled = false;
+    function scheduleCleanup() {
+        if (cleanupScheduled) {
+            return;
+        }
+        cleanupScheduled = true;
+        window.setTimeout(() => {
+            cleanupScheduled = false;
+            cleanupAds();
+        }, 80);
+    }
+
+    cleanupAds();
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", cleanupAds, { once: true });
+    }
+    window.addEventListener("load", cleanupAds, { once: true });
+    try {
+        const observerRoot = document.documentElement || document;
+        new MutationObserver(scheduleCleanup).observe(observerRoot, { childList: true, subtree: true, attributes: true });
+    } catch (error) {}
+})();
+"""
+
     _PLAYBACK_STATE_SCRIPT = """
 (function () {
     const store = window.__store__;
@@ -2936,6 +3253,7 @@ class SongsterrPagePanel(QWidget):
         super().__init__()
         self._url = ""
         self._web_profile = None
+        self._ad_request_interceptor = None
         self.view = None
         self._poll_in_flight = False
         self._last_state_key: tuple[int, int, bool] | None = None
@@ -2992,6 +3310,10 @@ class SongsterrPagePanel(QWidget):
             from PyQt6.QtWebEngineWidgets import QWebEngineView
         except Exception:
             return False
+        try:
+            from PyQt6.QtWebEngineCore import QWebEngineUrlRequestInterceptor
+        except Exception:
+            QWebEngineUrlRequestInterceptor = None
 
         try:
             storage_root = Path.home() / ".tab_analyzer" / "songsterr_web_sessions"
@@ -3000,6 +3322,18 @@ class SongsterrPagePanel(QWidget):
             profile.setPersistentStoragePath(str(storage_root))
             profile.setCachePath(str(storage_root / "page_cache"))
             profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
+            if QWebEngineUrlRequestInterceptor is not None:
+                class SongsterrAdRequestInterceptor(QWebEngineUrlRequestInterceptor):
+                    def interceptRequest(self, info) -> None:  # noqa: N802 - Qt API name.
+                        try:
+                            host = info.requestUrl().host()
+                        except Exception:
+                            return
+                        if _is_songsterr_ad_request_host(host):
+                            info.block(True)
+
+                self._ad_request_interceptor = SongsterrAdRequestInterceptor(profile)
+                profile.setUrlRequestInterceptor(self._ad_request_interceptor)
             try:
                 from PyQt6.QtWebEngineCore import QWebEngineScript
 
@@ -3010,6 +3344,14 @@ class SongsterrPagePanel(QWidget):
                 bridge_script.setRunsOnSubFrames(False)
                 bridge_script.setSourceCode(self._STAGE_BRIDGE_SCRIPT)
                 profile.scripts().insert(bridge_script)
+
+                ad_cleanup_script = QWebEngineScript()
+                ad_cleanup_script.setName("TabAnalyzerSongsterrAdCleanup")
+                ad_cleanup_script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+                ad_cleanup_script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+                ad_cleanup_script.setRunsOnSubFrames(True)
+                ad_cleanup_script.setSourceCode(self._AD_CLEANUP_SCRIPT)
+                profile.scripts().insert(ad_cleanup_script)
             except Exception:
                 pass
             self._web_profile = profile
@@ -3017,6 +3359,7 @@ class SongsterrPagePanel(QWidget):
             self.view.setPage(QWebEnginePage(profile, self.view))
         except Exception:
             self._web_profile = None
+            self._ad_request_interceptor = None
             self.view = None
             return False
         return True

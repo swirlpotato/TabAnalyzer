@@ -7,6 +7,7 @@ from tab_analyzer.ui import (
     YOUTUBE_VIEW_HEIGHT,
     YOUTUBE_VIEW_WIDTH,
     _allow_qt_webengine_autoplay,
+    _is_songsterr_ad_request_host,
     _make_youtube_view_non_interactive,
     _set_youtube_view_size,
     _youtube_player_html,
@@ -101,6 +102,34 @@ class YouTubePlayerHtmlTests(unittest.TestCase):
 
         self.assertEqual(view.fixed_size, (YOUTUBE_VIEW_WIDTH, YOUTUBE_VIEW_HEIGHT))
         self.assertEqual(view.fixed_size, (356, 200))
+
+
+class SongsterrAdRequestTests(unittest.TestCase):
+    def test_ad_request_hosts_are_blocked(self):
+        blocked_hosts = [
+            "googleads.g.doubleclick.net",
+            "pagead2.googlesyndication.com",
+            "securepubads.g.doubleclick.net",
+            "imasdk.googleapis.com",
+            "ads.pubmatic.com",
+        ]
+
+        for host in blocked_hosts:
+            with self.subTest(host=host):
+                self.assertTrue(_is_songsterr_ad_request_host(host))
+
+    def test_media_hosts_are_not_blocked(self):
+        allowed_hosts = [
+            "www.songsterr.com",
+            "www.youtube.com",
+            "www.youtube-nocookie.com",
+            "i.ytimg.com",
+            "rr1---sn-ab5l6n6z.googlevideo.com",
+        ]
+
+        for host in allowed_hosts:
+            with self.subTest(host=host):
+                self.assertFalse(_is_songsterr_ad_request_host(host))
 
 
 if __name__ == "__main__":
