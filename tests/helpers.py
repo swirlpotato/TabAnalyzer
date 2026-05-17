@@ -183,7 +183,7 @@ def write_gpif_fixture(path: Path) -> Path:
   </Voices>
   <Beats>
     <Beat id="2"><Notes>20 21 22</Notes><Rhythm ref="1"/></Beat>
-    <Beat id="7"><Notes>70 71 72</Notes><Rhythm ref="1"/></Beat>
+    <Beat id="7"><Notes>70 71 72</Notes><Rhythm ref="1"/><Properties><Property name="TremoloBar"/></Properties></Beat>
   </Beats>
   <Rhythms><Rhythm id="1"><NoteValue>quarter</NoteValue></Rhythm></Rhythms>
   <Notes>

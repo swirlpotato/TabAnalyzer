@@ -1,10 +1,12 @@
 import unittest
+from dataclasses import replace
+from unittest.mock import patch
 
 from tab_analyzer.analysis import Candidate
 from tab_analyzer.i18n import tr
 from tab_analyzer.theory import TheoryExplainer
 
-from tests.helpers import theory_fixture_song
+from tests.helpers import beat, measure, song_with_measures, tab_note, theory_fixture_song
 
 
 class TheoryExplainerTests(unittest.TestCase):
@@ -34,6 +36,30 @@ class TheoryExplainerTests(unittest.TestCase):
         self.assertIn("C major", html)
         self.assertIn("Am", html)
         self.assertIn("<html>", html)
+
+    def test_song_explanation_mentions_guitar_requirements(self):
+        seven_string_tuning = (64, 59, 55, 50, 45, 40, 35)
+        song = song_with_measures(
+            (
+                measure(
+                    1,
+                    (
+                        beat(0, (tab_note(1, 20, 0, seven_string_tuning),)),
+                        beat(480, (replace(tab_note(7, 5, 480, seven_string_tuning), techniques=("tremolo_bar",)),)),
+                    ),
+                ),
+            ),
+            tuning=seven_string_tuning,
+        )
+
+        with patch("locale.getlocale", return_value=("English_United States", "1252")):
+            html = TheoryExplainer().explain_song(song)
+
+        self.assertIn("Required guitar conditions", html)
+        self.assertIn("21-fret guitar can play it", html)
+        self.assertIn("7-string guitar", html)
+        self.assertIn("6-string guitar", html)
+        self.assertIn("tremolo arm", html)
 
     def test_tab_selection_explanation_mentions_playing_details(self):
         song = theory_fixture_song()

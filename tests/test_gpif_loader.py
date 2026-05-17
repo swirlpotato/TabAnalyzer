@@ -1,8 +1,9 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 
-from tab_analyzer.gp_loader import default_track_index, list_tracks, load_gp_file
+from tab_analyzer.gp_loader import _pyguitarpro_note_techniques, default_track_index, list_tracks, load_gp_file
 
 from tests.helpers import write_gpif_fixture
 
@@ -45,6 +46,7 @@ class GpifLoaderTests(unittest.TestCase):
         self.assertIn("slide", techniques)
         self.assertIn("let_ring", techniques)
         self.assertIn("bend", techniques)
+        self.assertIn("tremolo_bar", techniques)
 
     def test_songsterr_gp_reads_gpif_bend_amount(self):
         song = load_gp_file(self.fixture_path, track_index=7)
@@ -52,6 +54,12 @@ class GpifLoaderTests(unittest.TestCase):
 
         self.assertEqual(len(bent_notes), 1)
         self.assertEqual(bent_notes[0].bend_semitones, 1)
+
+    def test_pyguitarpro_beat_tremolo_bar_marks_arm_usage(self):
+        note = SimpleNamespace(type=None, effect=SimpleNamespace())
+        beat = SimpleNamespace(effect=SimpleNamespace(tremoloBar=SimpleNamespace(type=SimpleNamespace(name="dip"))))
+
+        self.assertIn("tremolo_bar", _pyguitarpro_note_techniques(note, None, beat))
 
 
 if __name__ == "__main__":

@@ -64,6 +64,9 @@ def _youtube_video_candidates(youtube: dict) -> list[str]:
         status = str(video.get("status") or "").strip()
         if status and status != "done":
             continue
+        feature = str(video.get("feature") or "").strip()
+        if feature != "alternative":
+            continue
         add(video.get("video_id") or video.get("videoId"))
     return candidates
 

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .analysis import Candidate, analyze_pitch_classes, candidate_display_name, interval_name, pitch_class_name
-from .gp_loader import MeasureData, SegmentData, SongData
+from .gp_loader import MeasureData, SegmentData, SongData, TabNote
 from .i18n import tr
 from .tab_knowledge import TabReadingKnowledge
 
@@ -122,6 +122,7 @@ class TheoryExplainer:
         prefer_flats = song.track.prefer_flats
         events = self._song_events(song, global_scale)
         paragraphs: list[str] = []
+        paragraphs.extend(self._song_guitar_requirements(song))
         paragraphs.extend(self._song_overview(song, events, global_scale, prefer_flats))
         paragraphs.extend(self._song_scale_distribution(events, global_scale, prefer_flats))
         paragraphs.extend(self._song_chord_palette(events, prefer_flats))
@@ -241,6 +242,94 @@ class TheoryExplainer:
         if global_scale is not None:
             overview.append(self._scale_parent_explanation(global_scale, self._scale_family(global_scale.name), prefer_flats))
         return overview
+
+    def _song_guitar_requirements(self, song: SongData) -> list[str]:
+        tab_notes = [
+            note
+            for measure in song.track.measures
+            for note in measure.notes
+            if note.fret >= 0
+        ]
+        notes = [note for note in tab_notes if not note.is_muted] or tab_notes
+        if not notes:
+            return []
+
+        max_fret = max(note.fret for note in notes)
+        fret_capacity = self._required_fret_capacity(max_fret)
+        details = [self._fret_requirement_text(max_fret, fret_capacity)]
+        string_detail = self._string_requirement_text(song, notes, fret_capacity)
+        if string_detail:
+            details.append(string_detail)
+        details.append(self._arm_requirement_text(notes))
+        return [f"<b>{tr('Required guitar conditions')}</b>: " + " ".join(html.escape(detail) for detail in details)]
+
+    def _required_fret_capacity(self, max_fret: int) -> int:
+        for fret_capacity in (21, 22, 24):
+            if max_fret <= fret_capacity:
+                return fret_capacity
+        return max_fret
+
+    def _fret_requirement_text(self, max_fret: int, fret_capacity: int) -> str:
+        if max_fret <= 0:
+            return tr("Only open strings are used, so fret count does not limit the guitar choice.")
+        if fret_capacity == 21:
+            return tr("The highest fret used is fret {max_fret}, so a 21-fret guitar can play it.").format(max_fret=max_fret)
+        if fret_capacity == 22:
+            return tr("The highest fret used is fret {max_fret}, so a 22-fret guitar can play it.").format(max_fret=max_fret)
+        if fret_capacity == 24:
+            return tr("The highest fret used is fret {max_fret}, so a 24-fret guitar is needed.").format(max_fret=max_fret)
+        return tr("The highest fret used is fret {max_fret}, so a guitar with more than 24 frets is needed.").format(max_fret=max_fret)
+
+    def _string_requirement_text(self, song: SongData, notes: list[TabNote], fret_capacity: int) -> str:
+        used_strings = [note.string for note in notes if note.string > 0]
+        if not used_strings:
+            return ""
+
+        track_strings = len(song.track.string_pitches)
+        max_used_string = max(used_strings)
+        if max_used_string <= 6:
+            if track_strings > 6:
+                return tr("The tab is written for {track_strings} strings, but it only uses up to the 6th string, so a 6-string guitar can play it.").format(track_strings=track_strings)
+            return tr("A 6-string guitar can play this because the used notes stay within the first 6 strings.")
+
+        cover_fret = self._six_string_cover_fret(song, notes)
+        if cover_fret is not None:
+            if cover_fret > fret_capacity:
+                return tr("The tab uses string {string_count}, so it is written for a {string_count}-string guitar, but the notes can be covered on a 6-string guitar if you allow up to fret {cover_fret}.").format(
+                    string_count=max_used_string,
+                    cover_fret=cover_fret,
+                )
+            return tr("The tab uses string {string_count}, so it is written for a {string_count}-string guitar, but the notes can be covered on a 6-string guitar.").format(
+                string_count=max_used_string,
+            )
+        return tr("The tab uses string {string_count} with notes outside the 6-string range, so a {string_count}-string guitar is required.").format(
+            string_count=max_used_string,
+        )
+
+    def _six_string_cover_fret(self, song: SongData, notes: list[TabNote]) -> int | None:
+        six_string_pitches = song.track.string_pitches[:6]
+        if len(six_string_pitches) < 6:
+            return None
+
+        cover_limit = max(24, song.track.fret_count)
+        required_frets: list[int] = []
+        for note in notes:
+            if note.string <= 6:
+                continue
+            playable_frets = [
+                note.midi - open_midi
+                for open_midi in six_string_pitches
+                if 0 <= note.midi - open_midi <= cover_limit
+            ]
+            if not playable_frets:
+                return None
+            required_frets.append(min(playable_frets))
+        return max(required_frets) if required_frets else 0
+
+    def _arm_requirement_text(self, notes: list[TabNote]) -> str:
+        if any("tremolo_bar" in note.techniques for note in notes):
+            return tr("Tremolo arm markings are used, so a guitar with a tremolo arm is recommended.")
+        return tr("No tremolo arm markings were detected.")
 
     def _song_scale_distribution(
         self,

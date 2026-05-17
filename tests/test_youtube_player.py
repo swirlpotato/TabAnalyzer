@@ -62,20 +62,21 @@ class YouTubePlayerHtmlTests(unittest.TestCase):
             "http://127.0.0.1:43210/youtube-player?video_id=abc123&status=%EB%8B%A4%EB%A5%B8%20%EC%98%81%EC%83%81%EC%9C%BC%EB%A1%9C%20%EB%B3%80%EA%B2%BD%20%EC%A4%91%EC%9E%85%EB%8B%88%EB%8B%A4.",
         )
 
-    def test_video_candidates_start_with_default_and_deduplicate_done_videos(self):
+    def test_video_candidates_start_with_default_and_continue_with_alternatives_only(self):
         self.assertEqual(
             _youtube_video_candidates(
                 {
                     "default_video_id": "main",
                     "videos": [
                         {"video_id": "backing", "status": "done"},
+                        {"video_id": "alt", "status": "done", "feature": "alternative"},
                         {"video_id": "main", "status": "done"},
                         {"video_id": "pending", "status": "processing"},
-                        {"videoId": "legacy", "status": "done"},
+                        {"videoId": "legacy", "status": "done", "feature": "alternative"},
                     ],
                 }
             ),
-            ["main", "backing", "legacy"],
+            ["main", "alt", "legacy"],
         )
 
     def test_qt_webengine_autoplay_flag_is_enabled(self):

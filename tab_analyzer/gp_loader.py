@@ -440,6 +440,7 @@ def _gpif_beat_notes(
     note_ids = _int_list(beat.findtext("Notes"))
     converted: list[TabNote] = []
     string_count = len(string_pitches_high_to_low)
+    beat_techniques = _gpif_beat_techniques(beat)
     for note_id in note_ids:
         note = notes.get(note_id)
         if note is None:
@@ -463,7 +464,12 @@ def _gpif_beat_notes(
                 start_in_measure=start_in_measure,
                 duration_ticks=duration_ticks,
                 velocity=0,
-                techniques=_gpif_note_techniques(note, previous_note_by_string.get(string_number) if previous_note_by_string else None),
+                techniques=_unique_techniques(
+                    (
+                        *_gpif_note_techniques(note, previous_note_by_string.get(string_number) if previous_note_by_string else None),
+                        *beat_techniques,
+                    )
+                ),
                 bend_semitones=_gpif_note_bend_semitones(note),
             )
         )
@@ -598,6 +604,13 @@ def _gpif_note_techniques(note: ET.Element, previous_note: TabNote | None) -> tu
         techniques.append("staccato")
     if _gpif_property_exists(note, "Accent", "Accentuated"):
         techniques.append("accent")
+    return _unique_techniques(techniques)
+
+
+def _gpif_beat_techniques(beat: ET.Element) -> tuple[str, ...]:
+    techniques: list[str] = []
+    if _gpif_property_exists(beat, "TremoloBar", "WhammyBar", "Whammy"):
+        techniques.append("tremolo_bar")
     return _unique_techniques(techniques)
 
 
@@ -818,6 +831,9 @@ def _pyguitarpro_note_techniques(note: object, previous_note: object | None, bea
     if beat_effect is not None:
         if bool(getattr(beat_effect, "vibrato", False)):
             techniques.append("vibrato")
+        tremolo_bar = getattr(beat_effect, "tremoloBar", None)
+        if tremolo_bar is not None and _enum_name(getattr(tremolo_bar, "type", None)) != "none":
+            techniques.append("tremolo_bar")
         if _enum_name(getattr(beat_effect, "slapEffect", None)) == "tapping":
             techniques.append("tapping")
 
