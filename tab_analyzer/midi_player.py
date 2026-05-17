@@ -6,7 +6,7 @@ import ctypes
 import sys
 from dataclasses import dataclass
 
-from PyQt6.QtCore import QObject, QElapsedTimer, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, QElapsedTimer, Qt, QTimer, pyqtSignal
 
 from .gp_loader import MeasureData, SongData, TabNote
 
@@ -20,6 +20,7 @@ METRONOME_TICK_NOTE = 77
 MIN_AUDIBLE_NOTE_MS = 32
 MIN_AUDIBLE_MUTED_NOTE_MS = 22
 MIN_AUDIBLE_DRUM_MS = 18
+POSITION_UPDATE_INTERVAL_MS = 33
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,7 @@ class TabMidiPlayer(QObject):
         super().__init__()
         self.output = MidiOutput()
         self.timer = QTimer(self)
+        self.timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.timer.setInterval(12)
         self.timer.timeout.connect(self._tick)
         self.clock = QElapsedTimer()
@@ -111,6 +113,7 @@ class TabMidiPlayer(QObject):
         self._ticks_per_ms = 1.0
         self._note_generation = 0
         self._active_note_generations: dict[tuple[int, int], int] = {}
+        self._position_emit_elapsed_ms = 0
 
     @property
     def is_midi_available(self) -> bool:
@@ -154,6 +157,7 @@ class TabMidiPlayer(QObject):
         self.current_tick = float(start_tick)
         self.event_index = _event_index_at_or_after(self.events, start_tick)
         self._stop_active_notes()
+        self._position_emit_elapsed_ms = 0
         self.clock.start()
         self.timer.start()
         self.playing = True
@@ -212,6 +216,7 @@ class TabMidiPlayer(QObject):
         ticks_per_ms = (self.song.tempo * (self.speed_percent / 100.0) * TICKS_PER_QUARTER) / 60000.0
         self._ticks_per_ms = max(0.001, ticks_per_ms)
         self.current_tick += elapsed_ms * ticks_per_ms
+        self._position_emit_elapsed_ms += elapsed_ms
 
         while self.event_index < len(self.events) and self.events[self.event_index].tick <= self.current_tick:
             self._send_event(self.events[self.event_index])
@@ -222,6 +227,7 @@ class TabMidiPlayer(QObject):
                 self._stop_active_notes()
                 self.current_tick = float(self.start_tick)
                 self.event_index = 0
+                self._position_emit_elapsed_ms = 0
                 self.clock.restart()
                 self.positionChanged.emit(self.start_tick)
                 return
@@ -229,7 +235,9 @@ class TabMidiPlayer(QObject):
             self.stop()
             return
 
-        self.positionChanged.emit(int(self.current_tick))
+        if self._position_emit_elapsed_ms >= POSITION_UPDATE_INTERVAL_MS:
+            self._position_emit_elapsed_ms = 0
+            self.positionChanged.emit(int(self.current_tick))
 
     def _send_event(self, event: PlaybackEvent) -> None:
         if event.kind == "note_on":

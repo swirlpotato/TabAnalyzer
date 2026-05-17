@@ -133,6 +133,21 @@ from ..songsterr import (
 from ..theory import TheoryExplainer
 from ..tunings import TuningPreset, load_tuning_presets
 from ..version import __version__
+from ..youtube_sync import (
+    AUTO_SYNC_MAX_PLAY_SECONDS,
+    AUTO_SYNC_MIN_PLAY_SECONDS,
+    AUTO_SYNC_PRE_ROLL_SECONDS,
+    AUTO_SYNC_SEARCH_RADIUS_SECONDS,
+    AUTO_SYNC_TARGET_PLAY_SECONDS,
+    SYNC_STEP_MS,
+    SyncEstimate,
+    YouTubeSyncError,
+    capture_system_audio,
+    estimate_sync_offset,
+    round_sync_milliseconds,
+    song_seconds_for_ticks,
+    ticks_for_song_seconds,
+)
 from .chord_search import (
     MAX_CHORD_FINDER_RESULTS,
     _ChordFinderSearchParams,
@@ -579,6 +594,50 @@ class _SongsterrWorker(QObject):
             self.failed.emit(str(exc))
         except Exception as exc:  # noqa: BLE001 - network/backend errors should be visible in the UI.
             self.failed.emit(str(exc))
+
+
+class _YouTubeSyncWorker(QObject):
+    captureStarted = pyqtSignal()
+    finished = pyqtSignal(object)
+
+    def __init__(
+        self,
+        song: SongData,
+        start_tick: int,
+        play_seconds: float,
+        total_capture_seconds: float,
+        current_offset_ms: int,
+        speed_percent: int,
+    ) -> None:
+        super().__init__()
+        self.song = song
+        self.start_tick = int(start_tick)
+        self.play_seconds = float(play_seconds)
+        self.total_capture_seconds = float(total_capture_seconds)
+        self.current_offset_ms = int(current_offset_ms)
+        self.speed_percent = int(speed_percent)
+
+    def run(self) -> None:
+        try:
+            samples, sample_rate, device = capture_system_audio(
+                self.total_capture_seconds,
+                started_callback=self.captureStarted.emit,
+            )
+            estimate = estimate_sync_offset(
+                samples,
+                sample_rate,
+                self.song,
+                self.start_tick,
+                self.play_seconds,
+                self.current_offset_ms,
+                self.speed_percent,
+                capture_device_name=device.display_name,
+            )
+            self.finished.emit(estimate)
+        except YouTubeSyncError as exc:
+            self.finished.emit(exc)
+        except Exception as exc:  # noqa: BLE001 - audio backends can raise platform-specific errors.
+            self.finished.emit(YouTubeSyncError(str(exc)))
 
 
 class TabCanvas(QWidget):
@@ -3559,6 +3618,7 @@ class TabPlaybackPanel(QWidget):
         self.youtube_sync_spin = QSpinBox()
         self.youtube_sync_down_button = QPushButton("-")
         self.youtube_sync_up_button = QPushButton("+")
+        self.youtube_sync_find_button = QPushButton("Auto Sync")
         self.record_metronome_check = QCheckBox("Record click")
         self.metronome_button = _icon_button(_player_icon("metronome"), "Metronome F9")
         self.record_button = _icon_button(_player_icon("record"), "Record F10")
@@ -3575,6 +3635,9 @@ class TabPlaybackPanel(QWidget):
         self.midi_status_label = QLabel()
         self.youtube_status_label = QLabel()
         self._syncing_record_slider = False
+        self._youtube_sync_thread: QThread | None = None
+        self._youtube_sync_worker: _YouTubeSyncWorker | None = None
+        self._youtube_sync_progress_dialog: AnalysisProgressDialog | None = None
         self.playback_shortcut: QShortcut | None = None
 
         self._build_ui()
@@ -3596,9 +3659,10 @@ class TabPlaybackPanel(QWidget):
         self.speed_down_button.clicked.connect(lambda: self._adjust_speed(-1))
         self.speed_reset_button.clicked.connect(lambda: self.speed_slider.setValue(100))
         self.speed_up_button.clicked.connect(lambda: self._adjust_speed(1))
-        self.youtube_sync_down_button.clicked.connect(lambda: self._adjust_youtube_sync(-10))
-        self.youtube_sync_up_button.clicked.connect(lambda: self._adjust_youtube_sync(10))
+        self.youtube_sync_down_button.clicked.connect(lambda: self._adjust_youtube_sync(-SYNC_STEP_MS))
+        self.youtube_sync_up_button.clicked.connect(lambda: self._adjust_youtube_sync(SYNC_STEP_MS))
         self.youtube_sync_spin.valueChanged.connect(self._on_youtube_sync_changed)
+        self.youtube_sync_find_button.clicked.connect(self._start_youtube_sync_search)
         self.metronome_button.clicked.connect(self._toggle_practice_metronome)
         self.record_button.clicked.connect(self._start_recording)
         self.record_stop_button.clicked.connect(self._stop_recording)
@@ -3634,13 +3698,16 @@ class TabPlaybackPanel(QWidget):
         for button in (self.youtube_sync_down_button, self.youtube_sync_up_button):
             button.setFixedSize(26, 26)
         self.youtube_sync_spin.setRange(-300000, 300000)
-        self.youtube_sync_spin.setSingleStep(10)
+        self.youtube_sync_spin.setSingleStep(SYNC_STEP_MS)
         self.youtube_sync_spin.setSuffix(" ms")
         self.youtube_sync_spin.setKeyboardTracking(False)
         self.youtube_sync_spin.setFixedWidth(88)
+        self.youtube_sync_find_button.setFixedWidth(76)
+        self.youtube_sync_find_button.setToolTip("Analyze YouTube audio and suggest the closest sync offset")
         controls.addWidget(self.youtube_sync_down_button)
         controls.addWidget(self.youtube_sync_spin)
         controls.addWidget(self.youtube_sync_up_button)
+        controls.addWidget(self.youtube_sync_find_button)
         controls.addWidget(self.repeat_check)
         controls.addWidget(QLabel("Start"))
         self.repeat_start_spin.setRange(1, 1)
@@ -3808,6 +3875,10 @@ class TabPlaybackPanel(QWidget):
         self._scroll_score_layout_into_view(layout)
 
     def shutdown(self) -> None:
+        self._close_youtube_sync_progress()
+        if self._youtube_sync_thread is not None and self._youtube_sync_thread.isRunning():
+            self._youtube_sync_thread.quit()
+            self._youtube_sync_thread.wait(15000)
         self.player.close()
         self.youtube_player.close()
         self.practice_metronome.close()
@@ -4128,7 +4199,7 @@ class TabPlaybackPanel(QWidget):
         youtube = self.details.get("youtube") if isinstance(self.details, dict) else None
         sync = youtube.get("sync") if isinstance(youtube, dict) else None
         try:
-            offset_ms = int(round(float(sync.get("offset_seconds", 0.0)) * 1000 / 10) * 10) if isinstance(sync, dict) else 0
+            offset_ms = round_sync_milliseconds(float(sync.get("offset_seconds", 0.0)) * 1000) if isinstance(sync, dict) else 0
         except (TypeError, ValueError):
             offset_ms = 0
         self._syncing_youtube_sync_spin = True
@@ -4139,13 +4210,13 @@ class TabPlaybackPanel(QWidget):
 
     def _update_youtube_sync_controls(self) -> None:
         enabled = bool(self.song is not None and self.youtube_player.video_id and self.youtube_player.available)
+        finding = self._youtube_sync_thread is not None and self._youtube_sync_thread.isRunning()
         for widget in (self.youtube_sync_spin, self.youtube_sync_down_button, self.youtube_sync_up_button):
             widget.setEnabled(enabled)
+        self.youtube_sync_find_button.setEnabled(enabled and not finding)
 
     def _round_to_sync_step(self, value: int) -> int:
-        sign = -1 if value < 0 else 1
-        rounded = ((abs(int(value)) + 5) // 10) * 10
-        return sign * rounded
+        return round_sync_milliseconds(value)
 
     def _adjust_youtube_sync(self, delta_ms: int) -> None:
         self.youtube_sync_spin.setValue(self.youtube_sync_spin.value() + delta_ms)
@@ -4162,6 +4233,164 @@ class TabPlaybackPanel(QWidget):
             return
         if update_youtube_sync_offset(self.details, value / 1000.0):
             save_details_file(self.song.path, self.details)
+
+    def _start_youtube_sync_search(self) -> None:
+        if self.song is None or not self.song.track.measures:
+            return
+        if self._youtube_sync_thread is not None and self._youtube_sync_thread.isRunning():
+            QMessageBox.information(self, tr("Auto Sync"), tr("A YouTube sync search is already running."))
+            return
+        if not self.youtube_player.playback_available or not self.youtube_player.video_id:
+            QMessageBox.warning(
+                self,
+                tr("YouTube unavailable"),
+                tr("YouTube playback information is unavailable, so MIDI playback will be used."),
+            )
+            return
+
+        start, end, play_seconds = self._youtube_sync_probe_range()
+        start_tick = self.song.track.measures[start].start_tick
+        total_capture_seconds = AUTO_SYNC_PRE_ROLL_SECONDS + play_seconds + AUTO_SYNC_SEARCH_RADIUS_SECONDS
+        speed_percent = self.speed_slider.value()
+
+        self._stop()
+        self.youtube_radio.setChecked(True)
+        self.youtube_sync_find_button.setText("Finding...")
+        self.youtube_sync_find_button.setEnabled(False)
+        self.youtube_status_label.setText(tr("Finding YouTube sync..."))
+        self._show_youtube_sync_progress("Preparing audio capture.")
+
+        thread = QThread(self)
+        worker = _YouTubeSyncWorker(
+            self.song,
+            start_tick,
+            play_seconds,
+            total_capture_seconds,
+            self.youtube_sync_spin.value(),
+            speed_percent,
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.captureStarted.connect(self._on_youtube_sync_capture_started)
+        worker.captureStarted.connect(
+            lambda s=start, e=end: QTimer.singleShot(
+                int(AUTO_SYNC_PRE_ROLL_SECONDS * 1000),
+                lambda: self._start_playback(s, e, repeat=False, play_from=s),
+            )
+        )
+        worker.finished.connect(self._on_youtube_sync_search_finished)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._on_youtube_sync_thread_finished)
+        self._youtube_sync_thread = thread
+        self._youtube_sync_worker = worker
+        thread.start()
+
+    def _show_youtube_sync_progress(self, detail: str) -> None:
+        self._close_youtube_sync_progress()
+        dialog = AnalysisProgressDialog(
+            self,
+            window_title="Auto Sync",
+            title_prefix="Auto Sync",
+            initial_detail=detail,
+        )
+        dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+        dialog.set_progress(10, detail)
+        self._youtube_sync_progress_dialog = dialog
+        dialog.show()
+
+    def _on_youtube_sync_capture_started(self) -> None:
+        if self._youtube_sync_progress_dialog is not None:
+            self._youtube_sync_progress_dialog.set_progress(25, "Capturing YouTube audio. Please wait.")
+
+    def _close_youtube_sync_progress(self) -> None:
+        if self._youtube_sync_progress_dialog is None:
+            return
+        self._youtube_sync_progress_dialog.close()
+        self._youtube_sync_progress_dialog.deleteLater()
+        self._youtube_sync_progress_dialog = None
+
+    def _youtube_sync_probe_range(self) -> tuple[int, int, float]:
+        if self.song is None or not self.song.track.measures:
+            return 0, 0, AUTO_SYNC_MIN_PLAY_SECONDS
+        measures = self.song.track.measures
+        speed_percent = self.speed_slider.value()
+        start = max(0, min(self.selected_start, len(measures) - 1))
+        selected_end = max(start, min(self.selected_end, len(measures) - 1))
+        start_tick = measures[start].start_tick
+        selected_end_tick = measures[selected_end].start_tick + measures[selected_end].length_ticks
+        selected_seconds = song_seconds_for_ticks(self.song, selected_end_tick - start_tick, speed_percent)
+
+        if selected_end > start and selected_seconds >= AUTO_SYNC_MIN_PLAY_SECONDS:
+            play_seconds = min(AUTO_SYNC_MAX_PLAY_SECONDS, selected_seconds)
+        else:
+            play_seconds = AUTO_SYNC_TARGET_PLAY_SECONDS
+
+        target_ticks = ticks_for_song_seconds(self.song, play_seconds + AUTO_SYNC_SEARCH_RADIUS_SECONDS, speed_percent)
+        target_end_tick = start_tick + target_ticks
+        end = start
+        for index in range(start, len(measures)):
+            end = index
+            measure_end = measures[index].start_tick + measures[index].length_ticks
+            if measure_end >= target_end_tick:
+                break
+        play_seconds = max(AUTO_SYNC_MIN_PLAY_SECONDS, min(AUTO_SYNC_MAX_PLAY_SECONDS, play_seconds))
+        return start, end, play_seconds
+
+    def _on_youtube_sync_search_finished(self, result: object) -> None:
+        self._stop()
+        if self._youtube_sync_progress_dialog is not None:
+            self._youtube_sync_progress_dialog.set_progress(100, "Done.")
+        self._close_youtube_sync_progress()
+        self.youtube_sync_find_button.setText("Auto Sync")
+        self._update_youtube_status()
+        if isinstance(result, Exception):
+            QMessageBox.warning(self, tr("Auto Sync"), str(result))
+            return
+        if not isinstance(result, SyncEstimate):
+            QMessageBox.warning(self, tr("Auto Sync"), tr("Automatic sync analysis failed."))
+            return
+
+        confidence_percent = round(result.confidence * 100)
+        device_line = f"\n{tr('Captured from')}: {result.capture_device_name}" if result.capture_device_name else ""
+        if abs(result.delta_ms) < SYNC_STEP_MS:
+            QMessageBox.information(
+                self,
+                tr("Auto Sync"),
+                tr("Sync looks close enough.")
+                + f"\n{tr('Current Sync')}: {result.current_offset_ms} ms"
+                + f"\n{tr('Confidence')}: {confidence_percent}%"
+                + device_line,
+            )
+            return
+
+        message = (
+            tr("The tab and YouTube audio look out of sync.")
+            + f"\n{tr('Current Sync')}: {result.current_offset_ms} ms"
+            + f"\n{tr('Suggested Sync')}: {result.suggested_offset_ms} ms"
+            + f"\n{tr('Estimated difference')}: {result.delta_ms:+d} ms"
+            + f"\n{tr('Confidence')}: {confidence_percent}%"
+            + device_line
+            + "\n\n"
+            + tr("Apply the suggested sync value?")
+        )
+        answer = QMessageBox.question(
+            self,
+            tr("Auto Sync"),
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.youtube_sync_spin.setValue(result.suggested_offset_ms)
+
+    def _on_youtube_sync_thread_finished(self) -> None:
+        self._youtube_sync_thread = None
+        self._youtube_sync_worker = None
+        self._close_youtube_sync_progress()
+        self.youtube_sync_find_button.setText("Auto Sync")
+        self._update_youtube_sync_controls()
 
     def _adjust_speed(self, delta_percent: int) -> None:
         self.speed_slider.setValue(self.speed_slider.value() + delta_percent)
@@ -4350,12 +4579,15 @@ class TabPlaybackPanel(QWidget):
     def _on_playback_position_changed(self, tick: int) -> None:
         self.score.set_playback_tick(tick)
         self.playbackTickChanged.emit(tick)
+        measure_changed = False
         if self.song is not None and self.song.track.measures:
             measure_index = self._measure_index_for_tick(tick)
             if measure_index != self._playback_measure_index:
                 self._playback_measure_index = measure_index
+                measure_changed = True
                 self.playbackMeasureChanged.emit(measure_index)
-        self._scroll_playback_measure_into_view(tick)
+        if measure_changed:
+            self._scroll_playback_measure_into_view(tick)
 
     def _scroll_playback_measure_into_view(self, tick: int) -> None:
         layout = self.score.layout_for_tick(tick)

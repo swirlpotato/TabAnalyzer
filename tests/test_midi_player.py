@@ -13,12 +13,13 @@ from tab_analyzer.midi_player import (
     MIN_AUDIBLE_DRUM_MS,
     MIN_AUDIBLE_MUTED_NOTE_MS,
     MIN_AUDIBLE_NOTE_MS,
+    POSITION_UPDATE_INTERVAL_MS,
     PlaybackEvent,
     TabMidiPlayer,
     _metronome_events,
     _note_events,
 )
-from tests.helpers import measure, tab_note
+from tests.helpers import beat, measure, song_with_measures, tab_note
 
 
 class FakeMidiOutput:
@@ -115,6 +116,37 @@ class MidiPlayerTests(unittest.TestCase):
                 player._event_duration_ms(PlaybackEvent(0, "note_on", 76, 100, duration_ticks=1, channel=DRUM_CHANNEL)),
                 MIN_AUDIBLE_DRUM_MS,
             )
+        finally:
+            player.close()
+
+    def test_position_updates_are_throttled_independently_from_midi_ticks(self):
+        class FakeClock:
+            def __init__(self, values: list[int]) -> None:
+                self.values = values
+
+            def restart(self) -> int:
+                return self.values.pop(0)
+
+        player = TabMidiPlayer()
+        player.output.close()
+        player.output = FakeMidiOutput()
+        song = song_with_measures((measure(1, (beat(0, (tab_note(1, 5, 0),)),)),))
+        emitted: list[int] = []
+        player.positionChanged.connect(emitted.append)
+        player.song = song
+        player.playing = True
+        player.speed_percent = 100
+        player.start_tick = 0
+        player.end_tick = song.track.measures[0].start_tick + song.track.measures[0].length_ticks
+        player.events = []
+        player.clock = FakeClock([12, 12, POSITION_UPDATE_INTERVAL_MS - 24])
+        try:
+            player._tick()
+            player._tick()
+            self.assertEqual(emitted, [])
+
+            player._tick()
+            self.assertEqual(len(emitted), 1)
         finally:
             player.close()
 

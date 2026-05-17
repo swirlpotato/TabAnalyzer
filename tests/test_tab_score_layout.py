@@ -559,10 +559,10 @@ class TabScoreLayoutTests(unittest.TestCase):
             panel.youtube_player.set_offset_milliseconds = offsets.append  # type: ignore[method-assign]
 
             with patch("tab_analyzer.ui.save_details_file") as save_details:
-                panel.youtube_sync_spin.setValue(10)
+                panel.youtube_sync_spin.setValue(125)
 
-            self.assertEqual(offsets[-1], 10)
-            self.assertEqual(panel.details["youtube"]["sync"]["offset_seconds"], 0.01)
+            self.assertEqual(offsets[-1], 100)
+            self.assertEqual(panel.details["youtube"]["sync"]["offset_seconds"], 0.1)
             save_details.assert_called_once_with(panel.song.path, panel.details)
         finally:
             panel.shutdown()
@@ -597,8 +597,10 @@ class TabScoreLayoutTests(unittest.TestCase):
             panel.score.set_song(song)
             changed: list[int] = []
             ticks: list[object] = []
+            scrolled: list[int] = []
             panel.playbackMeasureChanged.connect(changed.append)
             panel.playbackTickChanged.connect(ticks.append)
+            panel._scroll_playback_measure_into_view = scrolled.append
 
             panel._on_playback_position_changed(song.track.measures[0].start_tick)
             panel._on_playback_position_changed(song.track.measures[0].start_tick + 480)
@@ -606,6 +608,7 @@ class TabScoreLayoutTests(unittest.TestCase):
 
             self.assertEqual(changed, [0, 1])
             self.assertEqual(ticks, [song.track.measures[0].start_tick, song.track.measures[0].start_tick + 480, song.track.measures[1].start_tick])
+            self.assertEqual(scrolled, [song.track.measures[0].start_tick, song.track.measures[1].start_tick])
         finally:
             panel.shutdown()
 
