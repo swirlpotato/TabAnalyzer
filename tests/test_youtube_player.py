@@ -1,9 +1,12 @@
+import os
 import unittest
 from unittest.mock import patch
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QApplication
 
 from tab_analyzer.ui import (
+    YouTubeTabPlayer,
     YOUTUBE_VIEW_HEIGHT,
     YOUTUBE_VIEW_WIDTH,
     _allow_qt_webengine_autoplay,
@@ -14,6 +17,9 @@ from tab_analyzer.ui import (
     _youtube_player_url,
     _youtube_video_candidates,
 )
+from tests.helpers import beat, measure, song_with_measures, tab_note
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 class FakeWebView:
@@ -36,7 +42,27 @@ class FakeWebView:
         self.fixed_size = (width, height)
 
 
+class FakePage:
+    def __init__(self) -> None:
+        self.scripts: list[str] = []
+
+    def runJavaScript(self, script: str, *args) -> None:
+        self.scripts.append(script)
+
+
+class FakePlayerView:
+    def __init__(self) -> None:
+        self.fake_page = FakePage()
+
+    def page(self) -> FakePage:
+        return self.fake_page
+
+
 class YouTubePlayerHtmlTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
     def test_player_html_includes_embed_origin_and_referrer(self):
         html = _youtube_player_html("abc123", "http://127.0.0.1:43210", "Changing")
 
@@ -103,6 +129,33 @@ class YouTubePlayerHtmlTests(unittest.TestCase):
 
         self.assertEqual(view.fixed_size, (YOUTUBE_VIEW_WIDTH, YOUTUBE_VIEW_HEIGHT))
         self.assertEqual(view.fixed_size, (356, 200))
+
+    def test_sync_offset_change_replays_current_youtube_tick(self):
+        with patch("tab_analyzer.ui.playback_core.YouTubeTabPlayer._load_web_engine", return_value=None):
+            player = YouTubeTabPlayer()
+        view = FakePlayerView()
+        player.view = view
+        player.song = song_with_measures((measure(1, (beat(0, (tab_note(1, 5, 0),)),)),))
+        player.current_tick = 960.0
+        player.speed_percent = 100
+        player.playing = True
+
+        player.set_offset_milliseconds(4000)
+
+        self.assertEqual(view.fake_page.scripts[-1], "playAt(4.500, 1.000);")
+
+    def test_sync_offset_change_updates_pending_play_command_while_loading(self):
+        with patch("tab_analyzer.ui.playback_core.YouTubeTabPlayer._load_web_engine", return_value=None):
+            player = YouTubeTabPlayer()
+        player.song = song_with_measures((measure(1, (beat(0, (tab_note(1, 5, 0),)),)),))
+        player.current_tick = 960.0
+        player.speed_percent = 75
+        player.playing = True
+        player._loading_video = True
+
+        player.set_offset_milliseconds(4000)
+
+        self.assertEqual(player._pending_player_script, "playAt(4.500, 0.750);")
 
 
 class SongsterrAdRequestTests(unittest.TestCase):

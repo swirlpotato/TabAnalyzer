@@ -9,6 +9,7 @@ import numpy as np
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
+import tab_analyzer.ui.tab_playback_panel as tab_playback_panel
 from tab_analyzer.youtube_sync import (
     AUTO_SYNC_PRE_ROLL_SECONDS,
     AUTO_SYNC_SEARCH_RADIUS_SECONDS,
@@ -121,6 +122,9 @@ class YouTubeSyncAnalysisTests(unittest.TestCase):
         finally:
             panel.shutdown()
             panel.close()
+
+    def test_tab_playback_panel_imports_youtube_sync_worker(self):
+        self.assertIs(tab_playback_panel._YouTubeSyncWorker, __import__("tab_analyzer.ui.workers", fromlist=["_YouTubeSyncWorker"])._YouTubeSyncWorker)
 
 
 if __name__ == "__main__":

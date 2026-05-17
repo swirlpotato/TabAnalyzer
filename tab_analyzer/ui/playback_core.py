@@ -311,7 +311,7 @@ class YouTubeTabPlayer(QObject):
     def stop(self, emit: bool = True) -> None:
         self.timer.stop()
         self._pending_player_script = ""
-        self._run_js("pauseVideo();")
+        self._run_js("if (typeof pauseVideo === 'function') { pauseVideo(); }")
         was_playing = self.playing
         self.playing = False
         if emit and was_playing:
@@ -326,7 +326,7 @@ class YouTubeTabPlayer(QObject):
     def set_offset_milliseconds(self, value: int) -> None:
         self.offset_seconds = int(value) / 1000.0
         if self.playing:
-            self._run_js(f"seekToSeconds({self._tick_to_seconds(self.current_tick):.3f});")
+            self._seek_current_tick_for_sync()
 
     def close(self) -> None:
         self.stop(emit=False)
@@ -526,6 +526,14 @@ class YouTubeTabPlayer(QObject):
             self._pending_player_script = script
             return
         self._run_js(script)
+
+    def _seek_current_tick_for_sync(self) -> None:
+        self._run_or_queue_js(
+            f"playAt({self._tick_to_seconds(self.current_tick):.3f}, {self.speed_percent / 100.0:.3f});",
+            defer=self._loading_video,
+        )
+        if self.clock.isValid():
+            self.clock.restart()
 
     def _set_youtube_message(self, message: str) -> None:
         self._run_js(f"setStatus({json.dumps(message)});")

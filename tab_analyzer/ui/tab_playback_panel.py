@@ -5,7 +5,7 @@ from __future__ import annotations
 from .common import *
 from .playback_core import RecordingController, StandaloneMetronome, YouTubeTabPlayer
 from .score import TabScoreWidget
-from .workers import AnalysisProgressDialog
+from .workers import AnalysisProgressDialog, _YouTubeSyncWorker
 
 class MemoEditorWidget(QWidget):
     textChanged = pyqtSignal()
