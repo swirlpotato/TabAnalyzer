@@ -611,6 +611,11 @@ def _gpif_beat_techniques(beat: ET.Element) -> tuple[str, ...]:
     techniques: list[str] = []
     if _gpif_property_exists(beat, "TremoloBar", "WhammyBar", "Whammy"):
         techniques.append("tremolo_bar")
+    hairpin = _clean_gpif_text(beat.findtext("Hairpin")).lower()
+    if hairpin in {"decrescendo", "diminuendo"}:
+        techniques.append("diminuendo")
+    elif hairpin == "crescendo":
+        techniques.append("crescendo")
     return _unique_techniques(techniques)
 
 

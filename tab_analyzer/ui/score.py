@@ -710,6 +710,7 @@ class TabScoreWidget(QWidget):
         note_metrics = QFontMetrics(note_font)
         note_positions = self._note_positions(measure, tab_left, tab_width, tab_top, string_gap)
         beat_positions = self._beat_positions(note_positions)
+        hidden_note_ids = self._hidden_tied_note_ids(measure)
 
         self._draw_rhythm_notation(painter, measure, beat_positions, tab_top, string_gap)
         self._draw_technique_spans(painter, beat_positions, rect.top(), tab_top)
@@ -720,7 +721,9 @@ class TabScoreWidget(QWidget):
 
         painter.setFont(note_font)
         for x, y, note, _beat in note_positions:
-            text = tab_note_text(note)
+            text = self._tab_note_text(note, hidden_note_ids)
+            if not text:
+                continue
             width = note_metrics.horizontalAdvance(text) + 8
             text_rect = QRect(x - width // 2, y - note_metrics.height() // 2, width, note_metrics.height())
             painter.setPen(QColor("#171923"))
@@ -739,6 +742,7 @@ class TabScoreWidget(QWidget):
         note_font = QFont("Consolas", max(9, int(11 * self.zoom)), QFont.Weight.DemiBold)
         note_metrics = QFontMetrics(note_font)
         min_gap = max(4, int(6 * self.zoom))
+        hidden_note_ids = self._hidden_tied_note_ids(measure)
         beat_items: list[tuple[int, BeatData, tuple[object, ...], int]] = []
         for beat in measure.beats:
             if not beat.notes:
@@ -747,7 +751,10 @@ class TabScoreWidget(QWidget):
             x = tab_left + note_pad + int(ratio * effective_width)
             half_width = max(
                 1,
-                max((note_metrics.horizontalAdvance(tab_note_text(note)) + 8) // 2 for note in beat.notes),
+                max(
+                    (note_metrics.horizontalAdvance(self._tab_note_text(note, hidden_note_ids)) + 8) // 2
+                    for note in beat.notes
+                ),
             )
             beat_items.append((x, beat, tuple(beat.notes), half_width))
 
@@ -765,6 +772,30 @@ class TabScoreWidget(QWidget):
                 y = tab_top + ((note.string - 1) * string_gap)
                 positions.append((x, y, note, beat))
         return positions
+
+    def _tab_note_text(self, note: object, hidden_note_ids: set[int] | None = None) -> str:
+        if hidden_note_ids is not None and id(note) in hidden_note_ids:
+            return ""
+        return tab_note_text(note)
+
+    def _hidden_tied_note_ids(self, measure: MeasureData) -> set[int]:
+        hidden: set[int] = set()
+        previous_by_string: dict[int, object] = {}
+        for beat in sorted(measure.beats, key=lambda item: item.start_in_measure):
+            for note in sorted(beat.notes, key=lambda item: item.string):
+                previous = previous_by_string.get(note.string)
+                if "tie" in getattr(note, "techniques", ()) and self._is_same_tied_note(previous, note):
+                    hidden.add(id(note))
+                previous_by_string[note.string] = note
+        return hidden
+
+    def _is_same_tied_note(self, previous: object | None, note: object) -> bool:
+        if previous is None:
+            return True
+        return (
+            getattr(previous, "fret", None) == getattr(note, "fret", None)
+            or getattr(previous, "midi", None) == getattr(note, "midi", None)
+        )
 
     def _spread_close_beat_positions(
         self,
@@ -851,18 +882,19 @@ class TabScoreWidget(QWidget):
             if beat.duration_ticks >= 1920:
                 painter.drawEllipse(QPointF(x, stem_top + int(3 * self.zoom)), max(3, int(4 * self.zoom)), max(2, int(2.5 * self.zoom)))
 
-        self._draw_rhythm_beams(painter, beat_positions, stem_bottom, beam_gap)
+        self._draw_rhythm_beams(painter, measure, beat_positions, stem_bottom, beam_gap)
         self._draw_tuplet_labels(painter, beat_positions, stem_bottom)
         painter.restore()
 
     def _draw_rhythm_beams(
         self,
         painter: QPainter,
+        measure: MeasureData,
         beat_positions: list[tuple[int, BeatData]],
         stem_bottom: int,
         beam_gap: int,
     ) -> None:
-        runs = self._rhythm_beam_runs(beat_positions)
+        runs = self._rhythm_beam_runs(beat_positions, measure)
         beam_height = max(2, int(3 * self.zoom))
         for run in runs:
             if len(run) == 1:
@@ -884,26 +916,46 @@ class TabScoreWidget(QWidget):
                     y = stem_bottom - ((min_count + level) * beam_gap)
                     painter.drawRect(QRect(x, y - beam_height // 2, int(10 * self.zoom), beam_height))
 
-    def _rhythm_beam_runs(self, beat_positions: list[tuple[int, BeatData]]) -> list[list[tuple[int, BeatData]]]:
+    def _rhythm_beam_runs(
+        self,
+        beat_positions: list[tuple[int, BeatData]],
+        measure: MeasureData | None = None,
+    ) -> list[list[tuple[int, BeatData]]]:
         runs: list[list[tuple[int, BeatData]]] = []
         current: list[tuple[int, BeatData]] = []
         expected_next: int | None = None
+        current_beat_unit: int | None = None
+        beat_unit_ticks = self._rhythm_beat_unit_ticks(measure) if measure is not None else None
         for item in beat_positions:
             _x, beat = item
+            beat_unit = beat.start_in_measure // beat_unit_ticks if beat_unit_ticks else None
             if self._rhythm_beam_count(beat.duration_ticks) <= 0:
                 if current:
                     runs.append(current)
                     current = []
                 expected_next = beat.start_in_measure + beat.duration_ticks
+                current_beat_unit = None
                 continue
+            if current and beat_unit is not None and beat_unit != current_beat_unit:
+                runs.append(current)
+                current = []
             if current and expected_next is not None and abs(beat.start_in_measure - expected_next) > 1:
                 runs.append(current)
                 current = []
             current.append(item)
+            current_beat_unit = beat_unit
             expected_next = beat.start_in_measure + beat.duration_ticks
         if current:
             runs.append(current)
         return runs
+
+    def _rhythm_beat_unit_ticks(self, measure: MeasureData) -> int:
+        try:
+            numerator_text, _denominator_text = measure.time_signature.split("/", 1)
+            numerator = int(numerator_text)
+        except ValueError:
+            numerator = 4
+        return max(1, round(measure.length_ticks / max(1, numerator)))
 
     def _draw_tuplet_labels(self, painter: QPainter, beat_positions: list[tuple[int, BeatData]], stem_bottom: int) -> None:
         groups = self._tuplet_groups(beat_positions)
@@ -970,9 +1022,6 @@ class TabScoreWidget(QWidget):
                     break
                 expected_next = next_beat.start_in_measure + next_beat.duration_ticks
                 index += 1
-            run_count = index - start_index
-            if run_count >= target_count * 2:
-                continue
             for group_start in range(start_index, index, target_count):
                 group_end = min(group_start + target_count, index) - 1
                 if group_end > group_start:
@@ -1015,7 +1064,7 @@ class TabScoreWidget(QWidget):
         row_top: int,
         tab_top: int,
     ) -> None:
-        specs = (("palm_mute", "PM"), ("let_ring", "let ring"))
+        specs = (("diminuendo", "dim."), ("crescendo", "cresc."), ("palm_mute", "PM"), ("let_ring", "let ring"))
         base_y = max(row_top + int(16 * self.zoom), tab_top - int(18 * self.zoom))
         drawn_lane = 0
         for technique, label in specs:
@@ -1078,13 +1127,36 @@ class TabScoreWidget(QWidget):
 
                 if "slide" in left_techniques:
                     self._draw_slide_mark_before_note(painter, right_note, right_x, right_y, note_metrics)
-                if "tie" in right_techniques:
-                    self._draw_slur_connection(painter, left_x, left_y, right_x, right_y, "")
-                elif "hammer_on" in right_techniques:
-                    self._draw_slur_connection(painter, left_x, left_y, right_x, right_y, "")
-                elif "pull_off" in right_techniques:
-                    self._draw_slur_connection(painter, left_x, left_y, right_x, right_y, "")
+            self._draw_slur_runs(painter, ordered)
         painter.restore()
+
+    def _draw_slur_runs(self, painter: QPainter, ordered: list[tuple[int, int, object, BeatData]]) -> None:
+        slur_techniques = {"tie", "hammer_on", "pull_off", "legato"}
+        index = 0
+        while index < len(ordered) - 1:
+            left = ordered[index]
+            right = ordered[index + 1]
+            left_x, _left_y, _left_note, _left_beat = left
+            right_x, _right_y, right_note, _right_beat = right
+            if right_x <= left_x or not slur_techniques.intersection(right_note.techniques):
+                index += 1
+                continue
+
+            start_index = index
+            end_index = index + 1
+            while end_index < len(ordered) - 1:
+                current = ordered[end_index]
+                next_item = ordered[end_index + 1]
+                current_x, _current_y, _current_note, _current_beat = current
+                next_x, _next_y, next_note, _next_beat = next_item
+                if next_x <= current_x or not slur_techniques.intersection(next_note.techniques):
+                    break
+                end_index += 1
+
+            start_x, start_y, _start_note, _start_beat = ordered[start_index]
+            end_x, end_y, _end_note, _end_beat = ordered[end_index]
+            self._draw_slur_connection(painter, start_x, start_y, end_x, end_y, "")
+            index = end_index
 
     def _draw_slur_connection(
         self,

@@ -491,6 +491,216 @@ ${HIDE_SELECTOR} {
 })();
 """
 
+    _SELECT_MEASURE_SCRIPT = """
+(function () {
+    const requestedIndex = Number(__MEASURE_INDEX__);
+    const store = window.__store__;
+    if (!store || typeof store.get !== "function") {
+        return { available: false, reason: "store" };
+    }
+    const state = store.get();
+    const part = state && state.part && state.part.current;
+    const measures = part && Array.isArray(part.measures) ? part.measures : [];
+    if (!Number.isFinite(requestedIndex) || !measures.length) {
+        return { available: false, reason: "part" };
+    }
+    const measureIndex = Math.max(0, Math.min(Math.floor(requestedIndex), measures.length - 1));
+
+    const durationUnits = function (duration) {
+        if (!Array.isArray(duration) || duration.length < 2) {
+            return 0;
+        }
+        const numerator = Number(duration[0]);
+        const denominator = Number(duration[1]);
+        if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) {
+            return 0;
+        }
+        return Math.max(0, (4 * 960 * numerator) / denominator);
+    };
+    const measureLength = function (measure, signature) {
+        const nextSignature = Array.isArray(measure && measure.signature) ? measure.signature : signature;
+        const voices = Array.isArray(measure && measure.voices) ? measure.voices : [];
+        let longest = 0;
+        for (const voice of voices) {
+            const beats = Array.isArray(voice && voice.beats) ? voice.beats : [];
+            let total = 0;
+            for (const beat of beats) {
+                total += durationUnits(beat && beat.duration);
+            }
+            longest = Math.max(longest, total);
+        }
+        if (longest > 0) {
+            return { length: longest, signature: nextSignature };
+        }
+        const numerator = Number(nextSignature && nextSignature[0]) || 4;
+        const denominator = Number(nextSignature && nextSignature[1]) || 4;
+        return { length: Math.max(1, (4 * 960 * numerator) / denominator), signature: nextSignature };
+    };
+    const tempoAtMeasure = function (index) {
+        const automations = part && part.automations && Array.isArray(part.automations.tempo)
+            ? part.automations.tempo
+            : [];
+        let bpm = 120;
+        for (const automation of automations) {
+            const automationMeasure = Number(automation && automation.measure);
+            const automationBpm = Number(automation && automation.bpm);
+            if (Number.isFinite(automationMeasure) && automationMeasure <= index && Number.isFinite(automationBpm) && automationBpm > 0) {
+                bpm = automationBpm;
+            }
+        }
+        return bpm;
+    };
+    const measureDurationMs = function (measure, signature, index) {
+        const current = measureLength(measure, signature);
+        const bpm = tempoAtMeasure(index);
+        return {
+            duration: (current.length / 960) * (60000 / bpm),
+            signature: current.signature
+        };
+    };
+    const layoutOccurrence = function (measure) {
+        const layouts = Array.isArray(measure && measure.layouts) ? measure.layouts : [];
+        for (const layout of layouts) {
+            const items = Array.isArray(layout && layout.beatsLayouts) ? layout.beatsLayouts : [];
+            for (const item of items) {
+                const occurrences = Array.isArray(item && item.occurrences) ? item.occurrences : [];
+                for (const occurrence of occurrences) {
+                    const value = Number(occurrence);
+                    if (Number.isFinite(value) && value >= 0) {
+                        return value;
+                    }
+                }
+            }
+        }
+        return null;
+    };
+
+    let signature = [4, 4];
+    let cursor = 0;
+    for (let index = 0; index < measureIndex; index += 1) {
+        const current = measureDurationMs(measures[index], signature, index);
+        signature = current.signature;
+        cursor += Math.max(1, current.duration);
+    }
+    const layoutCursor = layoutOccurrence(measures[measureIndex]);
+    if (Number.isFinite(Number(layoutCursor))) {
+        cursor = Number(layoutCursor);
+    }
+
+    const currentEditorCursor = function () {
+        const latest = store.get();
+        return latest && latest.editorUI && Array.isArray(latest.editorUI.cursor)
+            && Array.isArray(latest.editorUI.cursor[0])
+            ? latest.editorUI.cursor[0]
+            : null;
+    };
+    const selectedMeasureIndex = function () {
+        const cursor = currentEditorCursor();
+        const value = Number(cursor && cursor[1]);
+        return Number.isInteger(value) ? value : null;
+    };
+    const firstBeatLayout = function (measure) {
+        if (measure && Array.isArray(measure.beatsLayouts) && measure.beatsLayouts.length) {
+            return measure.beatsLayouts[0];
+        }
+        const layouts = Array.isArray(measure && measure.layouts) ? measure.layouts : [];
+        for (const layout of layouts) {
+            if (Array.isArray(layout && layout.beatsLayouts) && layout.beatsLayouts.length) {
+                return layout.beatsLayouts[0];
+            }
+        }
+        return null;
+    };
+    const cursorForMeasure = function () {
+        const currentCursor = currentEditorCursor() || [];
+        const beatLayout = firstBeatLayout(measures[measureIndex]);
+        const beats = Array.isArray(beatLayout && beatLayout.beats) ? beatLayout.beats : [];
+        const currentVoice = Number.isInteger(Number(currentCursor[2])) ? Number(currentCursor[2]) : 0;
+        const currentString = Number.isInteger(Number(currentCursor[4])) ? Number(currentCursor[4]) : 0;
+        let beat = beats.find((item) => item && item.voice === currentVoice && !item.rest);
+        beat = beat || beats.find((item) => item && !item.rest) || beats[0];
+        let string = currentString;
+        const notes = Array.isArray(beat && beat.notes) ? beat.notes : [];
+        if (notes.length && !notes.some((note) => note && note.string === string)) {
+            const strings = notes
+                .map((note) => Number(note && note.string))
+                .filter((value) => Number.isInteger(value));
+            if (strings.length) {
+                string = Math.min(...strings);
+            }
+        }
+        const partId = Number.isInteger(Number(currentCursor[0]))
+            ? Number(currentCursor[0])
+            : Number(part && part.partId) || 0;
+        return [
+            partId,
+            measureIndex,
+            Number.isInteger(Number(beat && beat.voice)) ? Number(beat.voice) : 0,
+            Number.isInteger(Number(beat && beat.index)) ? Number(beat.index) : 0,
+            string
+        ];
+    };
+    const navigateToBar = function () {
+        try {
+            if (typeof window.srNavigate !== "function") {
+                return false;
+            }
+            const url = new URL(window.location.href);
+            url.searchParams.set("toBar", String(measureIndex + 1));
+            window.srNavigate(url.pathname + url.search + url.hash);
+            return true;
+        } catch (error) {
+            return false;
+        }
+    };
+
+    let dispatched = 0;
+    const targetCursor = cursorForMeasure();
+    if (typeof store.dispatch === "function") {
+        const beatLayout = firstBeatLayout(measures[measureIndex]);
+        const dispatchAction = function (name, payload) {
+            try {
+                store.dispatch(name, payload);
+                dispatched += 1;
+            } catch (error) {
+                return false;
+            }
+            return true;
+        };
+        if (beatLayout) {
+            dispatchAction("editorUI/toBeat", {
+                beatsLayout: beatLayout,
+                string: targetCursor[4],
+                keepHighlight: true
+            });
+        }
+        dispatchAction("commands/editor:position", {
+            cursor: [targetCursor],
+            requestId: `tab-analyzer-${Date.now()}`
+        });
+        dispatchAction("editorUI/cursor:position", {
+            cursor: [targetCursor],
+            highlight: undefined
+        });
+        const cursorState = state && state.cursor && state.cursor.position;
+        if (cursorState && typeof cursorState === "object") {
+            dispatchAction("cursor/move", Object.assign({}, cursorState, { cursor: cursor }));
+        }
+    }
+    const navigated = navigateToBar();
+    const selected = selectedMeasureIndex() === measureIndex;
+
+    return {
+        available: true,
+        selected: selected,
+        measureIndex: measureIndex,
+        cursor: cursor,
+        dispatched: dispatched,
+        navigated: navigated
+    };
+})();
+"""
+
     def __init__(self) -> None:
         super().__init__()
         self._url = ""
@@ -499,6 +709,9 @@ ${HIDE_SELECTOR} {
         self.view = None
         self._poll_in_flight = False
         self._last_state_key: tuple[int, int, bool] | None = None
+        self._pending_measure_index: int | None = None
+        self._measure_selection_attempts = 0
+        self._measure_selection_in_flight = False
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(90)
         self._poll_timer.timeout.connect(self._poll_playback_state)
@@ -517,25 +730,35 @@ ${HIDE_SELECTOR} {
     def set_url(self, url: str) -> None:
         target = str(url or "").strip()
         if target == self._url:
+            self._apply_pending_measure_selection()
             return
         self._url = target
         self._last_state_key = None
         self._poll_in_flight = False
+        self._measure_selection_attempts = 0
         if self.view is not None:
             if target:
                 self.view.load(QUrl(target))
                 self._poll_timer.start()
             else:
                 self._poll_timer.stop()
+                self._pending_measure_index = None
                 self.view.setHtml("")
                 self.playbackPositionChanged.emit(None)
             return
         self._poll_timer.stop()
+        if not target:
+            self._pending_measure_index = None
         self.playbackPositionChanged.emit(None)
         self._update_fallback_html()
 
     def current_url(self) -> str:
         return self._url
+
+    def set_selected_measure_index(self, measure_index: int) -> None:
+        self._pending_measure_index = max(0, int(measure_index))
+        self._measure_selection_attempts = 0
+        self._apply_pending_measure_selection()
 
     def shutdown(self) -> None:
         self._poll_timer.stop()
@@ -599,12 +822,46 @@ ${HIDE_SELECTOR} {
             self._web_profile = profile
             self.view = QWebEngineView(self)
             self.view.setPage(QWebEnginePage(profile, self.view))
+            self.view.loadFinished.connect(self._on_page_load_finished)
         except Exception:
             self._web_profile = None
             self._ad_request_interceptor = None
             self.view = None
             return False
         return True
+
+    def _on_page_load_finished(self, _ok: bool) -> None:
+        self._measure_selection_attempts = 0
+        self._apply_pending_measure_selection()
+
+    def _apply_pending_measure_selection(self) -> None:
+        if self._measure_selection_in_flight or self.view is None or not self._url or self._pending_measure_index is None:
+            return
+        script = self._SELECT_MEASURE_SCRIPT.replace("__MEASURE_INDEX__", str(self._pending_measure_index))
+        try:
+            page = self.view.page()
+        except RuntimeError:
+            return
+        self._measure_selection_in_flight = True
+        try:
+            page.runJavaScript(script, self._on_measure_selection_applied)
+        except RuntimeError:
+            self._measure_selection_in_flight = False
+
+    def _on_measure_selection_applied(self, result: object) -> None:
+        self._measure_selection_in_flight = False
+        if self._measure_selection_applied_successfully(result):
+            self._pending_measure_index = None
+            self._measure_selection_attempts = 0
+            return
+        if self._pending_measure_index is None:
+            return
+        self._measure_selection_attempts += 1
+        if self._measure_selection_attempts <= 20:
+            QTimer.singleShot(250, self._apply_pending_measure_selection)
+
+    def _measure_selection_applied_successfully(self, result: object) -> bool:
+        return isinstance(result, dict) and bool(result.get("available")) and bool(result.get("selected"))
 
     def _poll_playback_state(self) -> None:
         if self.view is None or not self._url or self._poll_in_flight:

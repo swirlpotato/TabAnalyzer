@@ -350,7 +350,8 @@ class TabPlaybackPanel(QWidget):
         count = len(song.track.measures) if song is not None else 1
         self.repeat_start_spin.setRange(1, max(1, count))
         self.repeat_end_spin.setRange(1, max(1, count))
-        self.set_selected_measure_range(0, 0, notify=False)
+        start, end = self._saved_selected_measure_range(song)
+        self.set_selected_measure_range(start, end, notify=False)
         self.midi_status_label.setText(
             _trf("MIDI OK - {tempo} BPM", tempo=song.tempo) if song is not None and self.player.is_midi_available else tr("No MIDI output")
         )
@@ -360,6 +361,13 @@ class TabPlaybackPanel(QWidget):
             self.record_beats_spin.setValue(self._song_beats_per_bar(song))
             self._on_record_metronome_changed()
         self._refresh_recording_files()
+
+    def _saved_selected_measure_range(self, song: SongData | None) -> tuple[int, int]:
+        if song is None or not song.track.measures:
+            return 0, 0
+        measure_numbers = tuple(measure.number for measure in song.track.measures)
+        saved = selected_measure_range_from_details(self.details, measure_numbers)
+        return saved if saved is not None else (0, 0)
 
     def set_selected_measure_range(self, start: int, end: int, notify: bool = False) -> None:
         if self.song is None or not self.song.track.measures:

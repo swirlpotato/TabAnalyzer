@@ -236,6 +236,83 @@ def update_youtube_sync_offset(details: dict, offset_seconds: float) -> bool:
     return True
 
 
+def update_selected_measure_range(
+    details: dict,
+    start_index: int,
+    end_index: int,
+    start_measure_number: int,
+    end_measure_number: int,
+) -> bool:
+    if end_index < start_index:
+        start_index, end_index = end_index, start_index
+        start_measure_number, end_measure_number = end_measure_number, start_measure_number
+
+    selection = details.setdefault("selection", {})
+    changed = False
+    if not isinstance(selection, dict):
+        selection = {}
+        details["selection"] = selection
+        changed = True
+
+    values = {
+        "start_measure_index": int(start_index),
+        "end_measure_index": int(end_index),
+        "start_measure_number": int(start_measure_number),
+        "end_measure_number": int(end_measure_number),
+    }
+    for key, value in values.items():
+        if selection.get(key) != value:
+            selection[key] = value
+            changed = True
+    return changed
+
+
+def selected_measure_range_from_details(details: dict, measure_numbers: tuple[int, ...] | list[int]) -> tuple[int, int] | None:
+    if not isinstance(details, dict):
+        return None
+    selection = details.get("selection")
+    if not isinstance(selection, dict):
+        return None
+
+    numbers = tuple(int(number) for number in measure_numbers)
+    start = _selection_measure_index(selection, numbers, "start")
+    if start is None:
+        start = _selection_measure_index(selection, numbers, "")
+    if start is None:
+        return None
+
+    end = _selection_measure_index(selection, numbers, "end")
+    if end is None:
+        end = start
+    if end < start:
+        start, end = end, start
+    return start, end
+
+
+def _selection_measure_index(selection: dict, measure_numbers: tuple[int, ...], prefix: str) -> int | None:
+    if prefix:
+        number_keys = (f"{prefix}_measure_number",)
+        index_keys = (f"{prefix}_measure_index",)
+    else:
+        number_keys = ("measure_number", "measure")
+        index_keys = ("measure_index",)
+
+    for key in number_keys:
+        if key not in selection:
+            continue
+        measure_number = _as_int(selection.get(key))
+        if measure_number is not None and measure_number in measure_numbers:
+            return measure_numbers.index(measure_number)
+
+    for key in index_keys:
+        if key not in selection:
+            continue
+        measure_index = _as_int(selection.get(key))
+        if measure_index is not None and 0 <= measure_index < len(measure_numbers):
+            return measure_index
+    return None
+
+
 def _write_details_file(file_path: Path, result: SongsterrResult, meta: dict) -> Path:
     details = _songsterr_details(result, meta)
     return save_details_file(file_path, details)

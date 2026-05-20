@@ -159,6 +159,25 @@ class TabScoreLayoutTests(unittest.TestCase):
 
         self.assertEqual(chord_x[4], chord_x[5])
 
+    def test_tied_same_notes_hide_repeated_tab_numbers(self):
+        first_note = tab_note(5, 5, 0)
+        new_note = tab_note(4, 7, 960)
+        tied_note = replace(tab_note(5, 5, 960), techniques=("tie",))
+        measure_data = measure(
+            79,
+            (
+                beat(0, (first_note,)),
+                beat(960, (new_note, tied_note)),
+            ),
+        )
+        widget = TabScoreWidget()
+
+        hidden_note_ids = widget._hidden_tied_note_ids(measure_data)
+
+        self.assertEqual(widget._tab_note_text(first_note, hidden_note_ids), "5")
+        self.assertEqual(widget._tab_note_text(new_note, hidden_note_ids), "7")
+        self.assertEqual(widget._tab_note_text(tied_note, hidden_note_ids), "")
+
     def test_rhythm_notation_counts_beams_from_duration(self):
         widget = TabScoreWidget()
 
@@ -196,7 +215,7 @@ class TabScoreLayoutTests(unittest.TestCase):
 
         groups = widget._tuplet_groups([(100 + (index * 40), beat_data) for index, beat_data in enumerate(beats)])
 
-        self.assertEqual(groups, [])
+        self.assertEqual(groups, [("3", 100, 180), ("3", 220, 300)])
 
     def test_tuplet_groups_keep_single_sextuplet_group(self):
         widget = TabScoreWidget()
@@ -209,7 +228,7 @@ class TabScoreLayoutTests(unittest.TestCase):
 
         self.assertEqual(groups, [("6", 100, 200)])
 
-    def test_tuplet_groups_omit_connected_sextuplet_run_from_songsterr_fixture(self):
+    def test_tuplet_groups_keep_connected_sextuplet_run_from_songsterr_fixture(self):
         widget = TabScoreWidget()
         beats = [
             replace(beat(index * 80, (tab_note(1, 12 + index, index * 80),)), duration_ticks=80, tuplet=(6, 4))
@@ -218,7 +237,57 @@ class TabScoreLayoutTests(unittest.TestCase):
 
         groups = widget._tuplet_groups([(100 + (index * 20), beat_data) for index, beat_data in enumerate(beats)])
 
-        self.assertEqual(groups, [])
+        self.assertEqual(groups, [("6", 100, 200), ("6", 220, 320)])
+
+    def test_rhythm_beam_runs_split_on_four_four_quarter_boundaries(self):
+        widget = TabScoreWidget()
+        beats = [
+            replace(beat(0, (tab_note(1, 8, 0),)), duration_ticks=240),
+            replace(beat(240, (tab_note(1, 12, 240),)), duration_ticks=120),
+            replace(beat(360, (tab_note(1, 8, 360),)), duration_ticks=120),
+            replace(beat(480, (tab_note(2, 10, 480),)), duration_ticks=240),
+            replace(beat(720, (tab_note(3, 9, 720),)), duration_ticks=240),
+            replace(beat(960, (tab_note(2, 12, 960),)), duration_ticks=240),
+            replace(beat(1200, (tab_note(2, 10, 1200),)), duration_ticks=240),
+            replace(beat(1440, (tab_note(3, 9, 1440),)), duration_ticks=240),
+            replace(beat(1680, (tab_note(4, 10, 1680),)), duration_ticks=240),
+            *[
+                replace(beat(1920 + (index * 160), (tab_note(1, 12 + index, 1920 + (index * 160)),)), duration_ticks=160, tuplet=(6, 4))
+                for index in range(12)
+            ],
+        ]
+        measure_data = measure(226, tuple(beats))
+
+        runs = widget._rhythm_beam_runs([(100 + index * 20, beat_data) for index, beat_data in enumerate(beats)], measure_data)
+        starts_by_run = [[beat_data.start_in_measure for _x, beat_data in run] for run in runs]
+
+        self.assertEqual(
+            starts_by_run,
+            [
+                [0, 240, 360, 480, 720],
+                [960, 1200, 1440, 1680],
+                [1920, 2080, 2240, 2400, 2560, 2720],
+                [2880, 3040, 3200, 3360, 3520, 3680],
+            ],
+        )
+
+    def test_diminuendo_span_draws_dim_label(self):
+        widget = TabScoreWidget()
+        dim_note_a = replace(tab_note(1, 12, 0), techniques=("diminuendo",))
+        dim_note_b = replace(tab_note(1, 10, 480), techniques=("diminuendo",))
+        dim_beat_a = beat(0, (dim_note_a,))
+        dim_beat_b = beat(480, (dim_note_b,))
+        calls: list[tuple[str, int, int]] = []
+        widget._draw_dashed_span_text = lambda _painter, label, start_x, end_x, _y, _color: calls.append((label, start_x, end_x))
+        image = QImage(220, 80, QImage.Format.Format_ARGB32)
+        image.fill(0)
+        painter = QPainter(image)
+        try:
+            widget._draw_technique_spans(painter, [(60, dim_beat_a), (120, dim_beat_b)], 20, 60)
+        finally:
+            painter.end()
+
+        self.assertEqual(calls, [("dim.", 60, 142)])
 
     def test_tab_playback_panel_installs_space_toggle_shortcut(self):
         panel = TabPlaybackPanel()
@@ -712,6 +781,32 @@ class TabScoreLayoutTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertGreater(calls[0][0], 60)
         self.assertLess(calls[0][0], 140)
+
+    def test_legato_run_draws_one_continuous_slur(self):
+        widget = TabScoreWidget()
+        first_note = tab_note(1, 8, 0)
+        second_note = replace(tab_note(1, 12, 240), techniques=("hammer_on",))
+        third_note = replace(tab_note(1, 8, 360), techniques=("pull_off",))
+        first_beat = beat(0, (first_note,))
+        second_beat = beat(240, (second_note,))
+        third_beat = beat(360, (third_note,))
+        image = QImage(240, 80, QImage.Format.Format_ARGB32)
+        image.fill(0)
+        painter = QPainter(image)
+        font = QFont("Consolas", 11, QFont.Weight.DemiBold)
+        metrics = QFontMetrics(font)
+        calls: list[tuple[int, int, int, int]] = []
+        widget._draw_slur_connection = lambda _painter, left_x, left_y, right_x, right_y, _label: calls.append((left_x, left_y, right_x, right_y))
+        try:
+            widget._draw_note_relationships(
+                painter,
+                [(60, 40, first_note, first_beat), (110, 40, second_note, second_beat), (160, 40, third_note, third_beat)],
+                metrics,
+            )
+        finally:
+            painter.end()
+
+        self.assertEqual(calls, [(60, 40, 160, 40)])
 
     def test_slide_source_note_does_not_draw_own_symbol(self):
         widget = TabScoreWidget()

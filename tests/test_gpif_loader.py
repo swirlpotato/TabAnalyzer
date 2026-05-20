@@ -47,6 +47,7 @@ class GpifLoaderTests(unittest.TestCase):
         self.assertIn("let_ring", techniques)
         self.assertIn("bend", techniques)
         self.assertIn("tremolo_bar", techniques)
+        self.assertIn("diminuendo", techniques)
 
     def test_songsterr_gp_reads_gpif_bend_amount(self):
         song = load_gp_file(self.fixture_path, track_index=7)

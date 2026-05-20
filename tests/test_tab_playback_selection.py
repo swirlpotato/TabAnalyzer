@@ -1,12 +1,16 @@
 import os
+import tempfile
 import unittest
+from dataclasses import replace
+from pathlib import Path
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
 
-from tab_analyzer.ui import TabAnalyzerWindow
+from tab_analyzer.songsterr import load_details_file, save_details_file
+from tab_analyzer.ui import SongsterrPagePanel, TabAnalyzerWindow
 from tests.helpers import beat, measure, song_with_measures, tab_note
 
 
@@ -55,6 +59,106 @@ class TabPlaybackSelectionTests(unittest.TestCase):
             self.assertEqual(window.fretboard.candidate, song.track.measures[1].analysis.scale_candidates[0])
         finally:
             window.close()
+
+    def test_saved_selected_measure_restores_when_song_loads(self):
+        with patch("tab_analyzer.ui.SongsterrPagePanel._load_web_engine", return_value=False):
+            window = TabAnalyzerWindow()
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                gp_path = Path(temp_dir) / "Song.gp"
+                gp_path.write_bytes(b"")
+                song = replace(
+                    song_with_measures(
+                        (
+                            measure(1, (beat(0, (tab_note(1, 5, 0),)),)),
+                            measure(2, (beat(0, (tab_note(1, 7, 0),)),)),
+                        )
+                    ),
+                    path=gp_path,
+                )
+                save_details_file(
+                    gp_path,
+                    {
+                        "selection": {
+                            "start_measure_index": 1,
+                            "end_measure_index": 1,
+                            "start_measure_number": 2,
+                            "end_measure_number": 2,
+                        },
+                    },
+                )
+
+                window._set_current_song(song)
+
+                self.assertEqual(window.tab_playback_panel.current_measure_index(), 1)
+                self.assertEqual(window.tab_canvas.selected_measure_index, 1)
+                self.assertIs(window.fretboard.measure, song.track.measures[1])
+                self.assertEqual(window.current_memo_measure_index, 1)
+        finally:
+            window.close()
+
+    def test_tab_selection_saves_details_and_pushes_songsterr(self):
+        with patch("tab_analyzer.ui.SongsterrPagePanel._load_web_engine", return_value=False):
+            window = TabAnalyzerWindow()
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                gp_path = Path(temp_dir) / "Song.gp"
+                gp_path.write_bytes(b"")
+                song = replace(
+                    song_with_measures(
+                        (
+                            measure(1, (beat(0, (tab_note(1, 5, 0),)),)),
+                            measure(2, (beat(0, (tab_note(1, 7, 0),)),)),
+                        )
+                    ),
+                    path=gp_path,
+                )
+                save_details_file(
+                    gp_path,
+                    {
+                        "source": "songsterr",
+                        "songsterr": {
+                            "song_id": 270,
+                            "url": "https://www.songsterr.com/a/wsa/queen-bohemian-rhapsody-tab-s270",
+                        },
+                    },
+                )
+                pushed: list[int] = []
+                window.songsterr_panel.set_selected_measure_index = lambda index: pushed.append(index)
+
+                window._set_current_song(song)
+                window._on_tab_block_selection_changed(1, 1)
+
+                self.assertEqual(load_details_file(gp_path)["selection"]["start_measure_number"], 2)
+                self.assertEqual(window.tab_canvas.selected_measure_index, 1)
+                self.assertEqual(pushed[-1], 1)
+        finally:
+            window.close()
+
+    def test_songsterr_measure_selection_requires_confirmed_selection(self):
+        with patch("tab_analyzer.ui.SongsterrPagePanel._load_web_engine", return_value=False):
+            panel = SongsterrPagePanel()
+        try:
+            panel._pending_measure_index = 2
+            panel._on_measure_selection_applied({"available": True, "selected": False})
+
+            self.assertEqual(panel._pending_measure_index, 2)
+            self.assertEqual(panel._measure_selection_attempts, 1)
+
+            panel._on_measure_selection_applied({"available": True, "selected": True})
+
+            self.assertIsNone(panel._pending_measure_index)
+            self.assertEqual(panel._measure_selection_attempts, 0)
+        finally:
+            panel.close()
+
+    def test_songsterr_measure_selection_uses_songsterr_dispatch_api(self):
+        script = SongsterrPagePanel._SELECT_MEASURE_SCRIPT
+
+        self.assertIn("store.dispatch(name, payload)", script)
+        self.assertIn('dispatchAction("commands/editor:position"', script)
+        self.assertIn('dispatchAction("editorUI/toBeat"', script)
+        self.assertIn('dispatchAction("cursor/move"', script)
 
     def test_songsterr_details_add_top_songsterr_tab(self):
         with patch("tab_analyzer.ui.SongsterrPagePanel._load_web_engine", return_value=False):
@@ -163,6 +267,8 @@ class TabPlaybackSelectionTests(unittest.TestCase):
             )
 
             self.assertIs(window.fretboard.measure, song.track.measures[0])
+            self.assertEqual(window.tab_playback_panel.current_measure_index(), 0)
+            self.assertEqual(window.tab_canvas.selected_measure_index, 0)
             self.assertIsNone(window.fretboard.playback_tick)
         finally:
             window.close()

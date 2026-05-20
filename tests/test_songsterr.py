@@ -14,7 +14,9 @@ from tab_analyzer.songsterr import (
     load_cookie_header,
     save_details_file,
     save_cookie_header,
+    selected_measure_range_from_details,
     songsterr_page_url,
+    update_selected_measure_range,
     update_youtube_default_video,
     update_youtube_sync_offset,
 )
@@ -109,6 +111,35 @@ class SongsterrParsingTests(unittest.TestCase):
 
         self.assertTrue(changed)
         self.assertEqual(details["youtube"]["sync"]["offset_seconds"], 0.01)
+
+    def test_updates_selected_measure_range(self):
+        details = {}
+
+        changed = update_selected_measure_range(details, 1, 3, 2, 4)
+
+        self.assertTrue(changed)
+        self.assertEqual(
+            details["selection"],
+            {
+                "start_measure_index": 1,
+                "end_measure_index": 3,
+                "start_measure_number": 2,
+                "end_measure_number": 4,
+            },
+        )
+        self.assertFalse(update_selected_measure_range(details, 1, 3, 2, 4))
+
+    def test_selected_measure_range_prefers_measure_numbers(self):
+        details = {
+            "selection": {
+                "start_measure_index": 0,
+                "end_measure_index": 0,
+                "start_measure_number": 10,
+                "end_measure_number": 11,
+            },
+        }
+
+        self.assertEqual(selected_measure_range_from_details(details, (9, 10, 11)), (1, 2))
 
     def test_songsterr_details_include_youtube_videos(self):
         meta = {

@@ -594,6 +594,7 @@ class TabAnalyzerWindow(QMainWindow):
         self._update_theory_panel(None, None, "scale", None)
         self._update_song_panel()
         self._update_chord_position_panel(None, None)
+        self._restore_selected_measure_from_details(self.song)
         self.right_tabs.setCurrentIndex(0)
         self.setWindowTitle(f"Tab Analyzer - {self.song.title}")
         self.statusBar().showMessage(
@@ -1228,6 +1229,7 @@ class TabAnalyzerWindow(QMainWindow):
         if index == self.songsterr_tab_index:
             self._songsterr_playback_measure_index = None
             self.tab_playback_panel.stop_playback()
+            self._sync_songsterr_to_measure(self.tab_playback_panel.current_measure_index())
 
     def _scroll_analysis_measure_into_view(self, measure_index: int) -> None:
         layout = self.tab_canvas.layout_for_measure(measure_index)
@@ -1289,6 +1291,69 @@ class TabAnalyzerWindow(QMainWindow):
         self.song_scale_usage_widget.set_song(song)
         self.chord_finder_widget.set_song(song)
         self._populate_root_string_combo(len(song.track.string_pitches) if song is not None else 6)
+        self._restore_selected_measure_from_details(song)
+
+    def _restore_selected_measure_from_details(self, song: SongData | None) -> None:
+        if song is None or not song.track.measures:
+            return
+        details = self.tab_playback_panel.details if isinstance(self.tab_playback_panel.details, dict) else load_details_file(song.path)
+        saved = selected_measure_range_from_details(details, tuple(measure.number for measure in song.track.measures))
+        if saved is None:
+            return
+        start, end = self._clamped_measure_range(saved[0], saved[1])
+        self._apply_selected_measure_range(start, end, update_context=True)
+        self._sync_songsterr_to_measure(start)
+        QTimer.singleShot(0, lambda item=start: self._scroll_current_top_tab_to_measure(item))
+
+    def _apply_selected_measure_range(self, start: int, end: int, update_context: bool = False) -> None:
+        if self.song is None or not self.song.track.measures:
+            return
+        start, end = self._clamped_measure_range(start, end)
+        self.tab_canvas.set_selected_measure_index(start, emit=False)
+        self.tab_playback_panel.set_selected_measure_range(start, end, notify=False)
+        self._set_current_memo_measure_index(start)
+        if not update_context:
+            return
+        measure = self.song.track.measures[start]
+        candidate = measure.analysis.scale_candidates[0] if measure.analysis.scale_candidates else None
+        self.fretboard.set_selection(measure, candidate, "scale", None)
+        self.theory_browser.setHtml(self.theory_explainer.explain_tab_selection(self.song, start, end))
+
+    def _save_selected_measure_range(self, start: int, end: int) -> None:
+        if self.song is None or not self.song.track.measures:
+            return
+        song_path = Path(self.song.path)
+        details_path = details_path_for_gp(song_path)
+        if not song_path.exists() and not details_path.exists():
+            return
+        start, end = self._clamped_measure_range(start, end)
+        measures = self.song.track.measures
+        details = self.tab_playback_panel.details if isinstance(self.tab_playback_panel.details, dict) else load_details_file(song_path)
+        if update_selected_measure_range(details, start, end, measures[start].number, measures[end].number):
+            save_details_file(song_path, details)
+        self.tab_playback_panel.details = details
+
+    def _sync_songsterr_to_measure(self, measure_index: int) -> None:
+        if self.song is None or not self.song.track.measures or self.songsterr_tab_index < 0:
+            return
+        measure_index, _end = self._clamped_measure_range(measure_index, measure_index)
+        self.songsterr_panel.set_selected_measure_index(measure_index)
+
+    def _scroll_current_top_tab_to_measure(self, measure_index: int) -> None:
+        if self.top_tabs.currentIndex() == self.analysis_tab_index:
+            self._scroll_analysis_measure_into_view(measure_index)
+        elif self.top_tabs.currentIndex() == self.tab_playback_tab_index:
+            self.tab_playback_panel.scroll_measure_into_view(measure_index)
+
+    def _clamped_measure_range(self, start: int, end: int) -> tuple[int, int]:
+        if self.song is None or not self.song.track.measures:
+            return 0, 0
+        count = len(self.song.track.measures)
+        start = max(0, min(start, count - 1))
+        end = max(0, min(end, count - 1))
+        if end < start:
+            start, end = end, start
+        return start, end
 
     def _update_songsterr_tab(self, song: SongData | None) -> None:
         details = load_details_file(song.path) if song is not None else {}
@@ -1431,6 +1496,8 @@ class TabAnalyzerWindow(QMainWindow):
             if not self._preserving_playback_selection:
                 self.tab_playback_panel.set_selected_measure_range(index, index, notify=False)
             self._set_current_memo_measure_index(index)
+            self._save_selected_measure_range(index, index)
+            self._sync_songsterr_to_measure(index)
             if self.top_tabs.currentIndex() == self.tab_playback_tab_index:
                 QTimer.singleShot(0, lambda item=index: self.tab_playback_panel.scroll_measure_into_view(item))
         self.fretboard.set_selection(measure, candidate, kind, segment)
@@ -1469,6 +1536,8 @@ class TabAnalyzerWindow(QMainWindow):
         candidate = first_measure.analysis.scale_candidates[0] if first_measure.analysis.scale_candidates else None
         self.tab_canvas.set_selected_measure_index(start, emit=False)
         self._set_current_memo_measure_index(start)
+        self._save_selected_measure_range(start, end)
+        self._sync_songsterr_to_measure(start)
         if self.top_tabs.currentIndex() == self.analysis_tab_index:
             QTimer.singleShot(0, lambda item=start: self._scroll_analysis_measure_into_view(item))
         self.fretboard.set_selection(first_measure, candidate, "scale", None)
@@ -1483,6 +1552,14 @@ class TabAnalyzerWindow(QMainWindow):
 
     def _on_tab_playback_measure_changed(self, measure_index: int) -> None:
         self._select_fretboard_scale_measure(measure_index)
+
+    def _sync_selection_from_songsterr_measure(self, measure_index: int) -> MeasureData | None:
+        if self.song is None or not self.song.track.measures:
+            return None
+        measure_index, _end = self._clamped_measure_range(measure_index, measure_index)
+        self._apply_selected_measure_range(measure_index, measure_index, update_context=True)
+        self._save_selected_measure_range(measure_index, measure_index)
+        return self.song.track.measures[measure_index]
 
     def _select_fretboard_scale_measure(self, measure_index: int) -> MeasureData | None:
         if self.song is None or not self.song.track.measures:
@@ -1517,17 +1594,25 @@ class TabAnalyzerWindow(QMainWindow):
             if tick_from_time is not None:
                 measure_index = self._measure_index_for_playback_tick(tick_from_time)
                 measure = measures[measure_index]
-                if self._songsterr_playback_measure_index != measure_index or self.fretboard.measure is not measure:
+                if (
+                    self._songsterr_playback_measure_index != measure_index
+                    or self.fretboard.measure is not measure
+                    or self.tab_playback_panel.current_measure_index() != measure_index
+                ):
                     self._songsterr_playback_measure_index = measure_index
-                    self._select_fretboard_scale_measure(measure_index)
+                    self._sync_selection_from_songsterr_measure(measure_index)
                 self._set_songsterr_playback_tick(tick_from_time, state)
                 return
 
         measure_index = max(0, min(measure_index, len(measures) - 1))
         measure = measures[measure_index]
-        if self._songsterr_playback_measure_index != measure_index or self.fretboard.measure is not measure:
+        if (
+            self._songsterr_playback_measure_index != measure_index
+            or self.fretboard.measure is not measure
+            or self.tab_playback_panel.current_measure_index() != measure_index
+        ):
             self._songsterr_playback_measure_index = measure_index
-            self._select_fretboard_scale_measure(measure_index)
+            self._sync_selection_from_songsterr_measure(measure_index)
 
         if not bool(state.get("shouldPlay")):
             self._stop_songsterr_tick_interpolation()
