@@ -110,6 +110,12 @@ class TrackInfo:
 
 
 @dataclass(frozen=True)
+class TempoChange:
+    tick: int
+    bpm: int
+
+
+@dataclass(frozen=True)
 class SongData:
     title: str
     artist: str
@@ -118,6 +124,7 @@ class SongData:
     global_analysis: MeasureAnalysis
     track: TrackData
     tempo: int = 120
+    tempo_changes: tuple[TempoChange, ...] = ()
 
     @property
     def global_scale(self) -> Candidate | None:
@@ -142,13 +149,15 @@ def load_gp_file(path: str | Path, track_index: int | None = None) -> SongData:
     string_pitches = tuple(string.value for string in sorted(track.strings, key=lambda item: item.number))
     prefer_flats = _prefer_flats_for_tuning(string_pitches)
 
+    source_measures = tuple(track.measures)
     initial_measures = tuple(
         _convert_measure(measure, string_pitch_by_number)
-        for measure in track.measures
+        for measure in source_measures
     )
     global_analysis = _infer_global_analysis(initial_measures)
     measures = _reanalyze_with_context(initial_measures, global_analysis.scale_candidates[0] if global_analysis.scale_candidates else None)
     measures = _apply_scale_tie_breakers(measures)
+    tempo_changes = _pyguitarpro_tempo_changes(song, source_measures, measures)
 
     return SongData(
         title=song.title or file_path.stem,
@@ -164,7 +173,8 @@ def load_gp_file(path: str | Path, track_index: int | None = None) -> SongData:
             measures=measures,
             prefer_flats=prefer_flats,
         ),
-        tempo=max(20, int(getattr(song, "tempo", 120) or 120)),
+        tempo=tempo_changes[0].bpm,
+        tempo_changes=tempo_changes,
     )
 
 
@@ -250,7 +260,8 @@ def _load_gpif_file(path: Path, track_index: int | None = None) -> SongData:
     string_pitches = tuple(reversed(string_pitches_low_to_high))
     prefer_flats = _prefer_flats_for_tuning(string_pitches)
     measures = _convert_gpif_measures(root, track_position, string_pitches)
-    tempo = _gpif_initial_tempo(root)
+    tempo_changes = _gpif_tempo_changes(root, measures)
+    tempo = tempo_changes[0].bpm
     global_analysis = _infer_global_analysis(measures)
     measures = _reanalyze_with_context(measures, global_analysis.scale_candidates[0] if global_analysis.scale_candidates else None)
     measures = _apply_scale_tie_breakers(measures)
@@ -270,6 +281,7 @@ def _load_gpif_file(path: Path, track_index: int | None = None) -> SongData:
             prefer_flats=prefer_flats,
         ),
         tempo=tempo,
+        tempo_changes=tempo_changes,
     )
 
 
@@ -548,14 +560,98 @@ def _gpif_track_fret_count(track: ET.Element) -> int:
     return 24
 
 
-def _gpif_initial_tempo(root: ET.Element) -> int:
+def _gpif_tempo_changes(root: ET.Element, measures: tuple[MeasureData, ...]) -> tuple[TempoChange, ...]:
+    changes: list[TempoChange] = []
     for automation in root.findall(".//MasterTrack/Automations/Automation"):
         if _clean_gpif_text(automation.findtext("Type")).lower() != "tempo":
             continue
         value = _int_list(automation.findtext("Value"))
         if value:
-            return max(20, min(300, value[0]))
-    return 120
+            changes.append(
+                TempoChange(
+                    tick=_gpif_tempo_tick(measures, automation.findtext("Bar"), automation.findtext("Position")),
+                    bpm=_gpif_tempo_value_to_quarter_bpm(value),
+                )
+            )
+    return _normalized_tempo_changes(changes, 120)
+
+
+def _gpif_initial_tempo(root: ET.Element) -> int:
+    return _gpif_tempo_changes(root, ())[0].bpm
+
+
+def _gpif_tempo_tick(measures: tuple[MeasureData, ...], bar_text: str | None, position_text: str | None) -> int:
+    try:
+        bar_index = int(float(_clean_gpif_text(bar_text) or "0"))
+    except ValueError:
+        bar_index = 0
+    try:
+        position = int(round(float(_clean_gpif_text(position_text) or "0")))
+    except ValueError:
+        position = 0
+
+    bar_index = max(0, bar_index)
+    position = max(0, position)
+    if not measures:
+        return position
+    if bar_index < len(measures):
+        measure = measures[bar_index]
+        return measure.start_tick + min(position, measure.length_ticks)
+    return measures[-1].start_tick + measures[-1].length_ticks + position
+
+
+def _gpif_tempo_value_to_quarter_bpm(values: list[int]) -> int:
+    bpm = values[0] if values else 120
+    note_value = values[1] if len(values) > 1 else 2
+    quarter_factor = {
+        0: 4.0,
+        1: 2.0,
+        2: 1.0,
+        3: 0.5,
+        4: 0.25,
+        5: 0.125,
+    }.get(note_value, 1.0)
+    return max(20, min(500, round(bpm * quarter_factor)))
+
+
+def _pyguitarpro_tempo_changes(
+    song: object,
+    source_measures: tuple[object, ...],
+    measures: tuple[MeasureData, ...],
+) -> tuple[TempoChange, ...]:
+    initial_tempo = max(20, min(500, int(getattr(song, "tempo", 120) or 120)))
+    changes = [TempoChange(0, initial_tempo)]
+    for source_measure, converted_measure in zip(source_measures, measures):
+        for voice in getattr(source_measure, "voices", []):
+            for beat in getattr(voice, "beats", []):
+                effect = getattr(beat, "effect", None)
+                mix_table_change = getattr(effect, "mixTableChange", None) if effect is not None else None
+                tempo_item = getattr(mix_table_change, "tempo", None) if mix_table_change is not None else None
+                tempo = getattr(tempo_item, "value", None)
+                try:
+                    bpm = int(tempo)
+                except (TypeError, ValueError):
+                    continue
+                if bpm <= 0:
+                    continue
+                changes.append(
+                    TempoChange(
+                        converted_measure.start_tick + int(getattr(beat, "startInMeasure", 0) or 0),
+                        max(20, min(500, bpm)),
+                    )
+                )
+    return _normalized_tempo_changes(changes, initial_tempo)
+
+
+def _normalized_tempo_changes(changes: Iterable[TempoChange], default_bpm: int) -> tuple[TempoChange, ...]:
+    by_tick: dict[int, int] = {}
+    for change in changes:
+        tick = max(0, int(change.tick))
+        bpm = max(20, min(500, int(change.bpm)))
+        by_tick[tick] = bpm
+    if 0 not in by_tick:
+        by_tick[0] = max(20, min(500, int(default_bpm or 120)))
+    return tuple(TempoChange(tick, bpm) for tick, bpm in sorted(by_tick.items()))
 
 
 def _gpif_property_int(note: ET.Element, name: str, child: str) -> int | None:

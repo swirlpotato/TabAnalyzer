@@ -342,8 +342,7 @@ class YouTubeTabPlayer(QObject):
         if self.song is None or not self.playing:
             return
         elapsed_ms = max(0, self.clock.restart())
-        ticks_per_ms = (self.song.tempo * (self.speed_percent / 100.0) * TICKS_PER_QUARTER) / 60000.0
-        self.current_tick += elapsed_ms * ticks_per_ms
+        self.current_tick = advance_song_tick_by_milliseconds(self.song, self.current_tick, elapsed_ms, self.speed_percent)
         if self.current_tick >= self.end_tick:
             if self.repeat:
                 self.current_tick = float(self.start_tick)
@@ -559,7 +558,7 @@ class YouTubeTabPlayer(QObject):
     def _tick_to_seconds(self, tick: float) -> float:
         if self.song is None:
             return max(0.0, self.offset_seconds)
-        song_seconds = (tick / TICKS_PER_QUARTER) * (60.0 / max(1, self.song.tempo))
+        song_seconds = song_seconds_between_ticks(self.song, 0, tick)
         return max(0.0, song_seconds + self.offset_seconds)
 
     def _play_from_tick(

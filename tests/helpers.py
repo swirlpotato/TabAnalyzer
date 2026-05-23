@@ -4,7 +4,7 @@ from pathlib import Path
 import zipfile
 
 from tab_analyzer.analysis import Candidate, MeasureAnalysis, analyze_midi_notes, prefer_flats_from_pitch_classes
-from tab_analyzer.gp_loader import BeatData, MeasureData, SegmentData, SongData, TabNote, TrackData
+from tab_analyzer.gp_loader import BeatData, MeasureData, SegmentData, SongData, TabNote, TempoChange, TrackData
 
 
 STANDARD_TUNING = (64, 59, 55, 50, 45, 40)
@@ -84,6 +84,8 @@ def song_with_measures(
     measures: tuple[MeasureData, ...],
     tuning: tuple[int, ...] = STANDARD_TUNING,
     title: str = "Synthetic Song",
+    tempo: int = 120,
+    tempo_changes: tuple[TempoChange, ...] | None = None,
 ) -> SongData:
     midi_notes = [note.midi for measure_data in measures for note in measure_data.notes]
     return SongData(
@@ -100,6 +102,8 @@ def song_with_measures(
             measures=measures,
             prefer_flats=prefer_flats_from_pitch_classes(midi % 12 for midi in tuning),
         ),
+        tempo=tempo,
+        tempo_changes=tempo_changes or (),
     )
 
 

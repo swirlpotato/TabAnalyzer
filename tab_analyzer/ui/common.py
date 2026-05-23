@@ -103,7 +103,15 @@ from ..chord_finder import (
 )
 from ..gp_loader import MeasureData, SegmentData, SongData, default_track_index, list_tracks, load_gp_file, retune_song
 from ..i18n import apply_translations, current_language, tr
-from ..midi_player import MidiOutput, TICKS_PER_QUARTER, TabMidiPlayer
+from ..midi_player import (
+    MidiOutput,
+    TICKS_PER_QUARTER,
+    TabMidiPlayer,
+    advance_song_tick_by_milliseconds,
+    song_seconds_between_ticks,
+    song_tick_for_seconds,
+    tempo_at_tick,
+)
 from ..scale_blocks import (
     ScaleBlock,
     ScaleBlockUsage,

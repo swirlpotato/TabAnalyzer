@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import ctypes
 import sys
+from bisect import bisect_right
 from dataclasses import dataclass
 
 from PyQt6.QtCore import QObject, QElapsedTimer, Qt, QTimer, pyqtSignal
 
-from .gp_loader import MeasureData, SongData, TabNote
+from .gp_loader import MeasureData, SongData, TabNote, TempoChange
 
 
 TICKS_PER_QUARTER = 960
@@ -21,6 +22,7 @@ MIN_AUDIBLE_NOTE_MS = 32
 MIN_AUDIBLE_MUTED_NOTE_MS = 22
 MIN_AUDIBLE_DRUM_MS = 18
 POSITION_UPDATE_INTERVAL_MS = 33
+NOTE_RELEASE_GAP_TICKS = 12
 
 
 @dataclass(frozen=True)
@@ -31,6 +33,7 @@ class PlaybackEvent:
     velocity: int
     duration_ticks: int = 0
     channel: int = GUITAR_CHANNEL
+    string: int = 0
 
 
 class MidiOutput:
@@ -113,6 +116,7 @@ class TabMidiPlayer(QObject):
         self._ticks_per_ms = 1.0
         self._note_generation = 0
         self._active_note_generations: dict[tuple[int, int], int] = {}
+        self._active_string_notes: dict[tuple[int, int], tuple[int, int]] = {}
         self._position_emit_elapsed_ms = 0
 
     @property
@@ -213,9 +217,8 @@ class TabMidiPlayer(QObject):
         if self.song is None or not self.playing:
             return
         elapsed_ms = max(0, self.clock.restart())
-        ticks_per_ms = (self.song.tempo * (self.speed_percent / 100.0) * TICKS_PER_QUARTER) / 60000.0
-        self._ticks_per_ms = max(0.001, ticks_per_ms)
-        self.current_tick += elapsed_ms * ticks_per_ms
+        self.current_tick = advance_song_tick_by_milliseconds(self.song, self.current_tick, elapsed_ms, self.speed_percent)
+        self._ticks_per_ms = ticks_per_millisecond(self.song, self.current_tick, self.speed_percent)
         self._position_emit_elapsed_ms += elapsed_ms
 
         while self.event_index < len(self.events) and self.events[self.event_index].tick <= self.current_tick:
@@ -247,11 +250,18 @@ class TabMidiPlayer(QObject):
 
     def _start_note(self, event: PlaybackEvent) -> None:
         key = (event.channel, event.note)
+        string_key = (event.channel, event.string) if event.string else None
+        if string_key is not None:
+            previous_key = self._active_string_notes.get(string_key)
+            if previous_key is not None and previous_key != key:
+                self._stop_note(previous_key)
         if key in self._active_note_generations:
             self.output.note_off(event.note, event.channel)
         self._note_generation += 1
         generation = self._note_generation
         self._active_note_generations[key] = generation
+        if string_key is not None:
+            self._active_string_notes[string_key] = key
         self.output.note_on(event.note, event.velocity, event.channel)
         _single_shot(self._event_duration_ms(event), lambda item=key, gen=generation: self._finish_note(item, gen))
 
@@ -264,32 +274,49 @@ class TabMidiPlayer(QObject):
         channel, note = key
         if key in self._active_note_generations:
             del self._active_note_generations[key]
+        for string_key, note_key in tuple(self._active_string_notes.items()):
+            if note_key == key:
+                del self._active_string_notes[string_key]
         self.output.note_off(note, channel)
 
     def _stop_active_notes(self) -> None:
         self._active_note_generations.clear()
+        self._active_string_notes.clear()
         self.output.all_notes_off()
 
     def _event_duration_ms(self, event: PlaybackEvent) -> int:
-        duration_ms = round(max(1, event.duration_ticks) / max(0.001, self._ticks_per_ms))
+        if self.song is not None:
+            duration_ms = round(milliseconds_for_song_ticks(self.song, event.tick, max(1, event.duration_ticks), self.speed_percent))
+        else:
+            duration_ms = round(max(1, event.duration_ticks) / max(0.001, self._ticks_per_ms))
         return max(_minimum_audible_ms(event), duration_ms)
 
 
 def _build_events(measures: tuple[MeasureData, ...], metronome: bool) -> list[PlaybackEvent]:
     events: list[PlaybackEvent] = []
+    scheduled_notes: list[tuple[TabNote, int]] = []
     for measure in measures:
         measure_end = measure.start_tick + measure.length_ticks
         for beat in measure.beats:
             if not beat.notes:
                 continue
             for note in beat.notes:
-                events.extend(_note_events(note, measure_end))
+                scheduled_notes.append((note, measure_end))
         if metronome:
             events.extend(_metronome_events(measure))
+    scheduled_notes.sort(key=lambda item: (item[0].start_tick, item[0].string, item[0].midi))
+    next_start_by_index: list[int | None] = [None] * len(scheduled_notes)
+    next_start_by_string: dict[int, int] = {}
+    for index in range(len(scheduled_notes) - 1, -1, -1):
+        note, _measure_end = scheduled_notes[index]
+        next_start_by_index[index] = next_start_by_string.get(note.string)
+        next_start_by_string[note.string] = note.start_tick
+    for index, (note, measure_end) in enumerate(scheduled_notes):
+        events.extend(_note_events(note, measure_end, next_start_by_index[index]))
     return sorted(events, key=lambda event: (event.tick, event.channel, event.note))
 
 
-def _note_events(note: TabNote, measure_end_tick: int) -> list[PlaybackEvent]:
+def _note_events(note: TabNote, measure_end_tick: int, next_string_tick: int | None = None) -> list[PlaybackEvent]:
     if note.is_muted:
         velocity = 34
         duration = min(max(30, note.duration_ticks // 6), 120)
@@ -299,8 +326,11 @@ def _note_events(note: TabNote, measure_end_tick: int) -> list[PlaybackEvent]:
             duration = max(40, min(note.duration_ticks, round(note.duration_ticks * 0.45)))
         else:
             duration = max(40, round(note.duration_ticks * 0.9))
-    off_tick = min(measure_end_tick, note.start_tick + duration)
-    return [PlaybackEvent(note.start_tick, "note_on", note.midi, velocity, max(1, off_tick - note.start_tick))]
+    max_end_tick = measure_end_tick
+    if next_string_tick is not None and next_string_tick > note.start_tick:
+        max_end_tick = min(max_end_tick, max(note.start_tick + 1, next_string_tick - NOTE_RELEASE_GAP_TICKS))
+    off_tick = min(max_end_tick, note.start_tick + duration)
+    return [PlaybackEvent(note.start_tick, "note_on", note.midi, velocity, max(1, off_tick - note.start_tick), string=note.string)]
 
 
 def _metronome_events(measure: MeasureData) -> list[PlaybackEvent]:
@@ -347,3 +377,108 @@ def _event_index_at_or_after(events: list[PlaybackEvent], tick: int) -> int:
         if event.tick >= tick:
             return index
     return len(events)
+
+
+def tempo_at_tick(song: SongData, tick: int | float) -> int:
+    changes = _song_tempo_changes(song)
+    return _tempo_at_tick_from_changes(changes, tick)
+
+
+def ticks_per_millisecond(song: SongData, tick: int | float, speed_percent: int = 100) -> float:
+    speed = max(0.01, float(speed_percent) / 100.0)
+    return max(0.001, tempo_at_tick(song, tick) * speed * TICKS_PER_QUARTER / 60000.0)
+
+
+def advance_song_tick_by_milliseconds(
+    song: SongData,
+    start_tick: int | float,
+    milliseconds: int | float,
+    speed_percent: int = 100,
+) -> float:
+    return song_tick_for_seconds(song, start_tick, float(milliseconds) / 1000.0, speed_percent)
+
+
+def milliseconds_for_song_ticks(
+    song: SongData,
+    start_tick: int | float,
+    ticks: int | float,
+    speed_percent: int = 100,
+) -> float:
+    return song_seconds_between_ticks(song, start_tick, float(start_tick) + max(0.0, float(ticks)), speed_percent) * 1000.0
+
+
+def song_seconds_between_ticks(
+    song: SongData,
+    start_tick: int | float,
+    end_tick: int | float,
+    speed_percent: int = 100,
+) -> float:
+    start = float(start_tick)
+    end = float(end_tick)
+    if end <= start:
+        return 0.0
+    speed = max(0.01, float(speed_percent) / 100.0)
+    changes = _song_tempo_changes(song)
+    change_ticks = [change.tick for change in changes]
+    seconds = 0.0
+    tick = start
+    while tick < end:
+        tempo = _tempo_at_tick_from_changes(changes, tick)
+        ticks_per_second = max(0.001, tempo * speed * TICKS_PER_QUARTER / 60.0)
+        change_index = bisect_right(change_ticks, tick)
+        next_change_tick = change_ticks[change_index] if change_index < len(change_ticks) else end
+        segment_end = min(end, max(tick, float(next_change_tick)))
+        if segment_end <= tick:
+            segment_end = end
+        seconds += (segment_end - tick) / ticks_per_second
+        tick = segment_end
+    return seconds
+
+
+def song_tick_for_seconds(
+    song: SongData,
+    start_tick: int | float,
+    seconds: int | float,
+    speed_percent: int = 100,
+) -> float:
+    remaining_seconds = max(0.0, float(seconds))
+    tick = float(start_tick)
+    if remaining_seconds <= 0:
+        return tick
+    speed = max(0.01, float(speed_percent) / 100.0)
+    changes = _song_tempo_changes(song)
+    change_ticks = [change.tick for change in changes]
+    while remaining_seconds > 0:
+        tempo = _tempo_at_tick_from_changes(changes, tick)
+        ticks_per_second = max(0.001, tempo * speed * TICKS_PER_QUARTER / 60.0)
+        change_index = bisect_right(change_ticks, tick)
+        next_change_tick = change_ticks[change_index] if change_index < len(change_ticks) else None
+        if next_change_tick is None:
+            return tick + (remaining_seconds * ticks_per_second)
+        ticks_until_change = max(0.0, float(next_change_tick) - tick)
+        seconds_until_change = ticks_until_change / ticks_per_second
+        if remaining_seconds <= seconds_until_change:
+            return tick + (remaining_seconds * ticks_per_second)
+        tick = float(next_change_tick)
+        remaining_seconds -= seconds_until_change
+    return tick
+
+
+def _song_tempo_changes(song: SongData) -> tuple[TempoChange, ...]:
+    raw_changes = tuple(getattr(song, "tempo_changes", ()) or ())
+    by_tick: dict[int, int] = {}
+    for change in raw_changes:
+        tick = max(0, int(getattr(change, "tick", 0) or 0))
+        bpm = max(1, int(getattr(change, "bpm", 0) or 0))
+        by_tick[tick] = bpm
+    if 0 not in by_tick:
+        by_tick[0] = max(1, int(getattr(song, "tempo", 120) or 120))
+    return tuple(TempoChange(tick, bpm) for tick, bpm in sorted(by_tick.items()))
+
+
+def _tempo_at_tick_from_changes(changes: tuple[TempoChange, ...], tick: int | float) -> int:
+    if not changes:
+        return 120
+    ticks = [change.tick for change in changes]
+    index = max(0, bisect_right(ticks, float(tick)) - 1)
+    return changes[index].bpm

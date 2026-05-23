@@ -1666,13 +1666,16 @@ class TabAnalyzerWindow(QMainWindow):
             return None
         if elapsed_ms is None:
             elapsed_ms = self._songsterr_playback_clock.elapsed()
-        ticks_per_ms = (
-            self.song.tempo
-            * (self._songsterr_playback_speed_percent / 100.0)
-            * TICKS_PER_QUARTER
-            / 60000.0
+        tick = int(
+            round(
+                song_tick_for_seconds(
+                    self.song,
+                    self._songsterr_playback_base_tick,
+                    max(0, elapsed_ms) / 1000.0,
+                    self._songsterr_playback_speed_percent,
+                )
+            )
         )
-        tick = int(round(self._songsterr_playback_base_tick + max(0, elapsed_ms) * ticks_per_ms))
         measures = self.song.track.measures
         first_tick = measures[0].start_tick
         last_tick = measures[-1].start_tick + max(1, measures[-1].length_ticks) - 1
@@ -1690,7 +1693,7 @@ class TabAnalyzerWindow(QMainWindow):
             return None
         if milliseconds < 0:
             return None
-        tick = int(round(milliseconds * self.song.tempo * TICKS_PER_QUARTER / 60000.0))
+        tick = int(round(song_tick_for_seconds(self.song, 0, milliseconds / 1000.0)))
         measures = self.song.track.measures
         first_tick = measures[0].start_tick
         last_tick = measures[-1].start_tick + max(1, measures[-1].length_ticks) - 1

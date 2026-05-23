@@ -696,7 +696,7 @@ class TabPlaybackPanel(QWidget):
     def _sync_tab_metronome_settings(self) -> None:
         if self.song is None:
             return
-        bpm = round(self.song.tempo * (self.speed_slider.value() / 100.0))
+        bpm = round(tempo_at_tick(self.song, self._current_playback_tick()) * (self.speed_slider.value() / 100.0))
         self.tab_metronome.set_bpm(bpm)
         self.tab_metronome.set_beats_per_bar(self._song_beats_per_bar(self.song))
 
@@ -854,14 +854,19 @@ class TabPlaybackPanel(QWidget):
         selected_end = max(start, min(self.selected_end, len(measures) - 1))
         start_tick = measures[start].start_tick
         selected_end_tick = measures[selected_end].start_tick + measures[selected_end].length_ticks
-        selected_seconds = song_seconds_for_ticks(self.song, selected_end_tick - start_tick, speed_percent)
+        selected_seconds = song_seconds_for_ticks(self.song, selected_end_tick - start_tick, speed_percent, start_tick=start_tick)
 
         if selected_end > start and selected_seconds >= AUTO_SYNC_MIN_PLAY_SECONDS:
             play_seconds = min(AUTO_SYNC_MAX_PLAY_SECONDS, selected_seconds)
         else:
             play_seconds = AUTO_SYNC_TARGET_PLAY_SECONDS
 
-        target_ticks = ticks_for_song_seconds(self.song, play_seconds + AUTO_SYNC_SEARCH_RADIUS_SECONDS, speed_percent)
+        target_ticks = ticks_for_song_seconds(
+            self.song,
+            play_seconds + AUTO_SYNC_SEARCH_RADIUS_SECONDS,
+            speed_percent,
+            start_tick=start_tick,
+        )
         target_end_tick = start_tick + target_ticks
         end = start
         for index in range(start, len(measures)):

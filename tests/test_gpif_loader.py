@@ -2,10 +2,11 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+import xml.etree.ElementTree as ET
 
-from tab_analyzer.gp_loader import _pyguitarpro_note_techniques, default_track_index, list_tracks, load_gp_file
+from tab_analyzer.gp_loader import _gpif_tempo_changes, _pyguitarpro_note_techniques, default_track_index, list_tracks, load_gp_file
 
-from tests.helpers import write_gpif_fixture
+from tests.helpers import measure, write_gpif_fixture
 
 
 class GpifLoaderTests(unittest.TestCase):
@@ -22,6 +23,7 @@ class GpifLoaderTests(unittest.TestCase):
         self.assertEqual(song.title, "Fixture Song")
         self.assertIn("Lead Guitar", song.track.name)
         self.assertEqual(song.tempo, 90)
+        self.assertEqual([(change.tick, change.bpm) for change in song.tempo_changes], [(0, 90)])
         self.assertEqual(len(song.track.measures), 1)
         self.assertEqual(song.track.string_names, ("E4", "B3", "G3", "D3", "A2", "E2"))
         self.assertTrue(any(measure.notes for measure in song.track.measures))
@@ -55,6 +57,25 @@ class GpifLoaderTests(unittest.TestCase):
 
         self.assertEqual(len(bent_notes), 1)
         self.assertEqual(bent_notes[0].bend_semitones, 1)
+
+    def test_gpif_tempo_map_keeps_later_tempo_changes(self):
+        root = ET.fromstring(
+            """
+            <GPIF>
+              <MasterTrack>
+                <Automations>
+                  <Automation><Type>Tempo</Type><Bar>0</Bar><Position>0</Position><Value>90 2</Value></Automation>
+                  <Automation><Type>Tempo</Type><Bar>1</Bar><Position>0</Position><Value>144 2</Value></Automation>
+                  <Automation><Type>Tempo</Type><Bar>1</Bar><Position>480</Position><Value>120 2</Value></Automation>
+                </Automations>
+              </MasterTrack>
+            </GPIF>
+            """
+        )
+
+        changes = _gpif_tempo_changes(root, (measure(1, ()), measure(2, ())))
+
+        self.assertEqual([(change.tick, change.bpm) for change in changes], [(0, 90), (3840, 144), (4320, 120)])
 
     def test_pyguitarpro_beat_tremolo_bar_marks_arm_usage(self):
         note = SimpleNamespace(type=None, effect=SimpleNamespace())

@@ -13,12 +13,16 @@ from tab_analyzer.midi_player import (
     MIN_AUDIBLE_DRUM_MS,
     MIN_AUDIBLE_MUTED_NOTE_MS,
     MIN_AUDIBLE_NOTE_MS,
+    NOTE_RELEASE_GAP_TICKS,
     POSITION_UPDATE_INTERVAL_MS,
     PlaybackEvent,
     TabMidiPlayer,
+    advance_song_tick_by_milliseconds,
     _metronome_events,
     _note_events,
+    song_seconds_between_ticks,
 )
+from tab_analyzer.gp_loader import TempoChange
 from tests.helpers import beat, measure, song_with_measures, tab_note
 
 
@@ -54,6 +58,13 @@ class MidiPlayerTests(unittest.TestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].kind, "note_on")
         self.assertEqual(events[0].duration_ticks, 40)
+        self.assertEqual(events[0].string, 1)
+
+    def test_note_duration_is_capped_before_next_note_on_same_string(self):
+        note = replace(tab_note(1, 12), duration_ticks=480)
+        events = _note_events(note, 3840, next_string_tick=60)
+
+        self.assertEqual(events[0].duration_ticks, 60 - NOTE_RELEASE_GAP_TICKS)
 
     def test_metronome_events_use_scheduled_note_duration(self):
         measure_data = measure(1, ())
@@ -94,6 +105,27 @@ class MidiPlayerTests(unittest.TestCase):
 
             scheduled[1][1]()
             self.assertEqual(fake_output.calls[-1], ("off", 60, None, 0))
+        finally:
+            midi_player._single_shot = original_single_shot
+            player.close()
+
+    def test_next_note_on_same_string_stops_previous_pitch(self):
+        scheduled: list[tuple[int, object]] = []
+        original_single_shot = midi_player._single_shot
+        midi_player._single_shot = lambda milliseconds, callback: scheduled.append((milliseconds, callback))
+        player = TabMidiPlayer()
+        player.output.close()
+        fake_output = FakeMidiOutput()
+        player.output = fake_output
+        player._ticks_per_ms = 1.0
+        try:
+            player._send_event(PlaybackEvent(0, "note_on", 60, 100, duration_ticks=120, string=1))
+            player._send_event(PlaybackEvent(60, "note_on", 62, 100, duration_ticks=120, string=1))
+
+            self.assertEqual(
+                fake_output.calls,
+                [("on", 60, 100, 0), ("off", 60, None, 0), ("on", 62, 100, 0)],
+            )
         finally:
             midi_player._single_shot = original_single_shot
             player.close()
@@ -149,6 +181,18 @@ class MidiPlayerTests(unittest.TestCase):
             self.assertEqual(len(emitted), 1)
         finally:
             player.close()
+
+    def test_tempo_map_advances_ticks_through_tempo_changes(self):
+        song = song_with_measures(
+            (measure(1, ()),),
+            tempo=120,
+            tempo_changes=(TempoChange(0, 120), TempoChange(960, 240)),
+        )
+
+        self.assertEqual(advance_song_tick_by_milliseconds(song, 0, 500), 960)
+        self.assertEqual(advance_song_tick_by_milliseconds(song, 960, 250), 1920)
+        self.assertEqual(advance_song_tick_by_milliseconds(song, 0, 750), 1920)
+        self.assertAlmostEqual(song_seconds_between_ticks(song, 0, 1920), 0.75)
 
 
 if __name__ == "__main__":

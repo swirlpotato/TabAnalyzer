@@ -7,7 +7,7 @@ import math
 from typing import Callable, Iterable
 
 from .gp_loader import SongData
-from .midi_player import TICKS_PER_QUARTER
+from .midi_player import song_seconds_between_ticks, song_tick_for_seconds
 
 try:
     import numpy as np
@@ -67,14 +67,24 @@ def round_sync_milliseconds(value: int | float, step_ms: int = SYNC_STEP_MS) -> 
     return sign * rounded
 
 
-def song_seconds_for_ticks(song: SongData, ticks: int | float, speed_percent: int = 100) -> float:
-    speed = max(0.01, float(speed_percent) / 100.0)
-    return (float(ticks) / TICKS_PER_QUARTER) * (60.0 / max(1, song.tempo)) / speed
+def song_seconds_for_ticks(
+    song: SongData,
+    ticks: int | float,
+    speed_percent: int = 100,
+    *,
+    start_tick: int | float = 0,
+) -> float:
+    return song_seconds_between_ticks(song, start_tick, float(start_tick) + float(ticks), speed_percent)
 
 
-def ticks_for_song_seconds(song: SongData, seconds: float, speed_percent: int = 100) -> int:
-    speed = max(0.01, float(speed_percent) / 100.0)
-    return int(round(float(seconds) * speed * max(1, song.tempo) * TICKS_PER_QUARTER / 60.0))
+def ticks_for_song_seconds(
+    song: SongData,
+    seconds: float,
+    speed_percent: int = 100,
+    *,
+    start_tick: int | float = 0,
+) -> int:
+    return int(round(song_tick_for_seconds(song, start_tick, seconds, speed_percent) - float(start_tick)))
 
 
 def expected_tab_onsets(
@@ -295,8 +305,7 @@ def _expected_tab_onsets_with_weights(
     *,
     pre_roll_seconds: float,
 ) -> tuple[_TabOnset, ...]:
-    end_tick = int(start_tick) + ticks_for_song_seconds(song, play_seconds, speed_percent)
-    seconds_per_tick = song_seconds_for_ticks(song, 1, speed_percent)
+    end_tick = int(round(song_tick_for_seconds(song, start_tick, play_seconds, speed_percent)))
     by_tick: dict[int, float] = {}
     for measure in song.track.measures:
         measure_start = measure.start_tick
@@ -312,7 +321,7 @@ def _expected_tab_onsets_with_weights(
             if start_tick <= tick <= end_tick:
                 by_tick[tick] = by_tick.get(tick, 0.0) + math.sqrt(len(beat.notes))
     return tuple(
-        _TabOnset(pre_roll_seconds + ((tick - int(start_tick)) * seconds_per_tick), weight)
+        _TabOnset(pre_roll_seconds + song_seconds_between_ticks(song, start_tick, tick, speed_percent), weight)
         for tick, weight in sorted(by_tick.items())
     )
 
