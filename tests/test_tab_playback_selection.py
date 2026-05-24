@@ -160,6 +160,92 @@ class TabPlaybackSelectionTests(unittest.TestCase):
         self.assertIn('dispatchAction("editorUI/toBeat"', script)
         self.assertIn('dispatchAction("cursor/move"', script)
 
+    def test_songsterr_repeat_range_updates_tab_player_selection(self):
+        with patch("tab_analyzer.ui.SongsterrPagePanel._load_web_engine", return_value=False):
+            window = TabAnalyzerWindow()
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                gp_path = Path(temp_dir) / "Song.gp"
+                gp_path.write_bytes(b"")
+                song = replace(
+                    song_with_measures(
+                        (
+                            measure(1, (beat(0, (tab_note(1, 5, 0),)),)),
+                            measure(2, (beat(0, (tab_note(1, 7, 0),)),)),
+                        )
+                    ),
+                    path=gp_path,
+                )
+                save_details_file(
+                    gp_path,
+                    {
+                        "source": "songsterr",
+                        "songsterr": {
+                            "song_id": 270,
+                            "url": "https://www.songsterr.com/a/wsa/queen-bohemian-rhapsody-tab-s270",
+                        },
+                    },
+                )
+
+                window._set_current_song(song)
+                window.songsterr_panel.set_selected_measure_range(0, 1, notify=True)
+
+                self.assertEqual(window.tab_playback_panel.selected_measure_range(), (0, 1))
+                self.assertEqual(window.songsterr_panel.selected_measure_range(), (0, 1))
+                self.assertEqual(load_details_file(gp_path)["selection"]["end_measure_number"], 2)
+        finally:
+            window.close()
+
+    def test_songsterr_repeat_restart_triggers_at_range_end(self):
+        with patch("tab_analyzer.ui.SongsterrPagePanel._load_web_engine", return_value=False):
+            panel = SongsterrPagePanel()
+        try:
+            calls: list[bool] = []
+            panel.set_measure_count(4, (1, 2))
+            panel.repeat_check.setChecked(True)
+            panel._seek_to_repeat_start = lambda: calls.append(True)
+
+            panel._maybe_restart_repeat(2, 0.5, True)
+            self.assertEqual(calls, [])
+
+            panel._maybe_restart_repeat(2, 0.99, True)
+            self.assertEqual(calls, [True])
+        finally:
+            panel.close()
+
+    def test_songsterr_repeat_preserves_range_during_playback_sync(self):
+        with patch("tab_analyzer.ui.SongsterrPagePanel._load_web_engine", return_value=False):
+            window = TabAnalyzerWindow()
+        try:
+            song = song_with_measures(
+                (
+                    measure(1, (beat(0, (tab_note(1, 5, 0),)),)),
+                    measure(2, (beat(0, (tab_note(1, 7, 0),)),)),
+                )
+            )
+            details = {
+                "source": "songsterr",
+                "songsterr": {
+                    "song_id": 270,
+                    "url": "https://www.songsterr.com/a/wsa/queen-bohemian-rhapsody-tab-s270",
+                },
+            }
+            with patch("tab_analyzer.ui.load_details_file", return_value=details):
+                window._set_current_song(song)
+            window.top_tabs.setCurrentWidget(window.songsterr_panel)
+            window.songsterr_panel.set_selected_measure_range(0, 1, notify=True)
+            window.songsterr_panel.repeat_check.setChecked(True)
+
+            window._on_songsterr_playback_position_changed(
+                {"measureIndex": 1, "ratio": 0.5, "shouldPlay": True}
+            )
+
+            self.assertEqual(window.tab_playback_panel.selected_measure_range(), (0, 1))
+            self.assertEqual(window.songsterr_panel.selected_measure_range(), (0, 1))
+            self.assertIs(window.fretboard.measure, song.track.measures[1])
+        finally:
+            window.close()
+
     def test_songsterr_details_add_top_songsterr_tab(self):
         with patch("tab_analyzer.ui.SongsterrPagePanel._load_web_engine", return_value=False):
             window = TabAnalyzerWindow()

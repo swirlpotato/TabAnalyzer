@@ -94,6 +94,7 @@ class TabAnalyzerWindow(QMainWindow):
         self.tab_playback_panel.selectionChanged.connect(self._on_tab_block_selection_changed)
         self.tab_playback_panel.playbackMeasureChanged.connect(self._on_tab_playback_measure_changed)
         self.tab_playback_panel.playbackTickChanged.connect(self.fretboard.set_playback_tick)
+        self.songsterr_panel.selectionChanged.connect(self._on_tab_block_selection_changed)
         self.songsterr_panel.playbackPositionChanged.connect(self._on_songsterr_playback_position_changed)
         self._songsterr_playback_tick_timer.setInterval(25)
         self._songsterr_playback_tick_timer.timeout.connect(self._advance_songsterr_playback_tick)
@@ -1285,6 +1286,10 @@ class TabAnalyzerWindow(QMainWindow):
         self._stop_songsterr_tick_interpolation()
         self.tab_canvas.set_song(song)
         self.tab_playback_panel.set_song(song)
+        self.songsterr_panel.set_measure_count(
+            len(song.track.measures) if song is not None else 0,
+            self.tab_playback_panel.selected_measure_range(),
+        )
         self._update_songsterr_tab(song)
         self.fretboard.set_song(song)
         self.scale_position_widget.set_song(song)
@@ -1311,6 +1316,7 @@ class TabAnalyzerWindow(QMainWindow):
         start, end = self._clamped_measure_range(start, end)
         self.tab_canvas.set_selected_measure_index(start, emit=False)
         self.tab_playback_panel.set_selected_measure_range(start, end, notify=False)
+        self.songsterr_panel.set_selected_measure_range(start, end, notify=False)
         self._set_current_memo_measure_index(start)
         if not update_context:
             return
@@ -1377,6 +1383,7 @@ class TabAnalyzerWindow(QMainWindow):
         self._songsterr_playback_measure_index = None
         self._stop_songsterr_tick_interpolation()
         self.songsterr_panel.set_url("")
+        self.songsterr_panel.set_measure_count(0)
 
     def _selected_tuning_preset(self) -> TuningPreset | None:
         preset_id = self.tuning_combo.currentData()
@@ -1495,6 +1502,7 @@ class TabAnalyzerWindow(QMainWindow):
         if index is not None:
             if not self._preserving_playback_selection:
                 self.tab_playback_panel.set_selected_measure_range(index, index, notify=False)
+                self.songsterr_panel.set_selected_measure_range(index, index, notify=False)
             self._set_current_memo_measure_index(index)
             self._save_selected_measure_range(index, index)
             self._sync_songsterr_to_measure(index)
@@ -1535,6 +1543,8 @@ class TabAnalyzerWindow(QMainWindow):
         first_measure = measures[start]
         candidate = first_measure.analysis.scale_candidates[0] if first_measure.analysis.scale_candidates else None
         self.tab_canvas.set_selected_measure_index(start, emit=False)
+        self.tab_playback_panel.set_selected_measure_range(start, end, notify=False)
+        self.songsterr_panel.set_selected_measure_range(start, end, notify=False)
         self._set_current_memo_measure_index(start)
         self._save_selected_measure_range(start, end)
         self._sync_songsterr_to_measure(start)
@@ -1557,6 +1567,11 @@ class TabAnalyzerWindow(QMainWindow):
         if self.song is None or not self.song.track.measures:
             return None
         measure_index, _end = self._clamped_measure_range(measure_index, measure_index)
+        if self.songsterr_panel.repeat_enabled():
+            measure = self._select_fretboard_scale_measure(measure_index)
+            self._set_current_memo_measure_index(measure_index)
+            self.theory_browser.setHtml(self.theory_explainer.explain_tab_selection(self.song, measure_index, measure_index))
+            return measure
         self._apply_selected_measure_range(measure_index, measure_index, update_context=True)
         self._save_selected_measure_range(measure_index, measure_index)
         return self.song.track.measures[measure_index]
@@ -1589,15 +1604,20 @@ class TabAnalyzerWindow(QMainWindow):
             return
 
         measures = self.song.track.measures
+        preserve_selected_range = self.songsterr_panel.repeat_enabled()
         if bool(state.get("shouldPlay")) and state.get("source") == "time":
             tick_from_time = self._songsterr_playback_tick_from_state(state)
             if tick_from_time is not None:
                 measure_index = self._measure_index_for_playback_tick(tick_from_time)
                 measure = measures[measure_index]
+                selection_mismatch = (
+                    not preserve_selected_range
+                    and self.tab_playback_panel.current_measure_index() != measure_index
+                )
                 if (
                     self._songsterr_playback_measure_index != measure_index
                     or self.fretboard.measure is not measure
-                    or self.tab_playback_panel.current_measure_index() != measure_index
+                    or selection_mismatch
                 ):
                     self._songsterr_playback_measure_index = measure_index
                     self._sync_selection_from_songsterr_measure(measure_index)
@@ -1606,10 +1626,14 @@ class TabAnalyzerWindow(QMainWindow):
 
         measure_index = max(0, min(measure_index, len(measures) - 1))
         measure = measures[measure_index]
+        selection_mismatch = (
+            not preserve_selected_range
+            and self.tab_playback_panel.current_measure_index() != measure_index
+        )
         if (
             self._songsterr_playback_measure_index != measure_index
             or self.fretboard.measure is not measure
-            or self.tab_playback_panel.current_measure_index() != measure_index
+            or selection_mismatch
         ):
             self._songsterr_playback_measure_index = measure_index
             self._sync_selection_from_songsterr_measure(measure_index)

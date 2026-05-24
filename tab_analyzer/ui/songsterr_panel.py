@@ -6,6 +6,9 @@ from .common import *
 
 class SongsterrPagePanel(QWidget):
     playbackPositionChanged = pyqtSignal(object)
+    selectionChanged = pyqtSignal(int, int)
+
+    _REPEAT_RESTART_RATIO = 0.985
 
     _STAGE_BRIDGE_SCRIPT = """
 (function () {
@@ -704,28 +707,55 @@ ${HIDE_SELECTOR} {
     def __init__(self) -> None:
         super().__init__()
         self._url = ""
+        self._measure_count = 1
+        self.selected_start = 0
+        self.selected_end = 0
+        self._syncing_selection = False
+        self._syncing_repeat_toggle = False
         self._web_profile = None
         self._ad_request_interceptor = None
         self.view = None
         self._poll_in_flight = False
         self._last_state_key: tuple[int, int, bool] | None = None
+        self._last_should_play = False
         self._pending_measure_index: int | None = None
         self._measure_selection_attempts = 0
         self._measure_selection_in_flight = False
+        self._repeat_seek_in_flight = False
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(90)
         self._poll_timer.timeout.connect(self._poll_playback_state)
+        self.repeat_check = QCheckBox("Repeat selection")
+        self.repeat_start_spin = QSpinBox()
+        self.repeat_end_spin = QSpinBox()
         self.fallback_browser = QTextBrowser()
         self.fallback_browser.setOpenExternalLinks(True)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+        controls = QHBoxLayout()
+        controls.setContentsMargins(8, 8, 8, 6)
+        controls.setSpacing(8)
+        controls.addWidget(self.repeat_check)
+        controls.addWidget(QLabel("Start"))
+        self.repeat_start_spin.setRange(1, 1)
+        self.repeat_start_spin.setKeyboardTracking(False)
+        controls.addWidget(self.repeat_start_spin)
+        controls.addWidget(QLabel("End"))
+        self.repeat_end_spin.setRange(1, 1)
+        self.repeat_end_spin.setKeyboardTracking(False)
+        controls.addWidget(self.repeat_end_spin)
+        controls.addStretch(1)
+        layout.addLayout(controls)
         if self._load_web_engine():
             layout.addWidget(self.view, 1)
         else:
             layout.addWidget(self.fallback_browser, 1)
             self._update_fallback_html()
+        self.repeat_check.toggled.connect(self._on_repeat_toggled)
+        self.repeat_start_spin.valueChanged.connect(self._on_repeat_range_changed)
+        self.repeat_end_spin.valueChanged.connect(self._on_repeat_range_changed)
 
     def set_url(self, url: str) -> None:
         target = str(url or "").strip()
@@ -735,6 +765,8 @@ ${HIDE_SELECTOR} {
         self._url = target
         self._last_state_key = None
         self._poll_in_flight = False
+        self._last_should_play = False
+        self._repeat_seek_in_flight = False
         self._measure_selection_attempts = 0
         if self.view is not None:
             if target:
@@ -754,6 +786,36 @@ ${HIDE_SELECTOR} {
 
     def current_url(self) -> str:
         return self._url
+
+    def set_measure_count(self, count: int, selected_range: tuple[int, int] | None = None) -> None:
+        self._measure_count = max(1, int(count or 0))
+        self._syncing_selection = True
+        for spin in (self.repeat_start_spin, self.repeat_end_spin):
+            spin.setRange(1, self._measure_count)
+        self._syncing_selection = False
+        if selected_range is None:
+            selected_range = (self.selected_start, self.selected_end)
+        self.set_selected_measure_range(selected_range[0], selected_range[1], notify=False)
+
+    def set_selected_measure_range(self, start: int, end: int, notify: bool = False) -> None:
+        start, end = self._clamped_measure_range(start, end)
+        self.selected_start = start
+        self.selected_end = end
+        self._syncing_selection = True
+        self.repeat_start_spin.setValue(start + 1)
+        self.repeat_end_spin.setValue(end + 1)
+        self._syncing_selection = False
+        if notify:
+            self.selectionChanged.emit(start, end)
+
+    def current_measure_index(self) -> int:
+        return self.selected_start
+
+    def selected_measure_range(self) -> tuple[int, int]:
+        return self.selected_start, self.selected_end
+
+    def repeat_enabled(self) -> bool:
+        return self.repeat_check.isChecked()
 
     def set_selected_measure_index(self, measure_index: int) -> None:
         self._pending_measure_index = max(0, int(measure_index))
@@ -837,15 +899,8 @@ ${HIDE_SELECTOR} {
     def _apply_pending_measure_selection(self) -> None:
         if self._measure_selection_in_flight or self.view is None or not self._url or self._pending_measure_index is None:
             return
-        script = self._SELECT_MEASURE_SCRIPT.replace("__MEASURE_INDEX__", str(self._pending_measure_index))
-        try:
-            page = self.view.page()
-        except RuntimeError:
-            return
         self._measure_selection_in_flight = True
-        try:
-            page.runJavaScript(script, self._on_measure_selection_applied)
-        except RuntimeError:
+        if not self._run_measure_selection_script(self._pending_measure_index, self._on_measure_selection_applied):
             self._measure_selection_in_flight = False
 
     def _on_measure_selection_applied(self, result: object) -> None:
@@ -862,6 +917,71 @@ ${HIDE_SELECTOR} {
 
     def _measure_selection_applied_successfully(self, result: object) -> bool:
         return isinstance(result, dict) and bool(result.get("available")) and bool(result.get("selected"))
+
+    def _run_measure_selection_script(self, measure_index: int, callback) -> bool:
+        if self.view is None or not self._url:
+            return False
+        script = self._SELECT_MEASURE_SCRIPT.replace("__MEASURE_INDEX__", str(max(0, int(measure_index))))
+        try:
+            page = self.view.page()
+        except RuntimeError:
+            return False
+        try:
+            page.runJavaScript(script, callback)
+        except RuntimeError:
+            return False
+        return True
+
+    def _on_repeat_range_changed(self, _value: int) -> None:
+        if self._syncing_selection:
+            return
+        start = self.repeat_start_spin.value() - 1
+        end = self.repeat_end_spin.value() - 1
+        self.set_selected_measure_range(start, end, notify=True)
+        self.set_selected_measure_index(self.selected_start)
+        if self.repeat_check.isChecked() and self._last_should_play:
+            self._seek_to_repeat_start()
+
+    def _on_repeat_toggled(self, enabled: bool) -> None:
+        if self._syncing_repeat_toggle:
+            return
+        if enabled and self._last_should_play:
+            self._seek_to_repeat_start()
+
+    def _set_repeat_checked(self, checked: bool) -> None:
+        if self.repeat_check.isChecked() == checked:
+            return
+        self._syncing_repeat_toggle = True
+        self.repeat_check.setChecked(checked)
+        self._syncing_repeat_toggle = False
+
+    def _clamped_measure_range(self, start: int, end: int) -> tuple[int, int]:
+        count = max(1, self._measure_count)
+        start = max(0, min(int(start), count - 1))
+        end = max(0, min(int(end), count - 1))
+        if end < start:
+            start, end = end, start
+        return start, end
+
+    def _maybe_restart_repeat(self, measure_index: int, ratio: float, should_play: bool) -> None:
+        if not should_play or not self.repeat_check.isChecked():
+            return
+        start, end = self.selected_measure_range()
+        outside_range = measure_index < start or measure_index > end
+        reached_end = measure_index == end and ratio >= self._REPEAT_RESTART_RATIO
+        if outside_range or reached_end:
+            self._seek_to_repeat_start()
+
+    def _seek_to_repeat_start(self) -> None:
+        if self._repeat_seek_in_flight:
+            return
+        self._repeat_seek_in_flight = True
+        if not self._run_measure_selection_script(self.selected_start, self._on_repeat_seek_applied):
+            self._repeat_seek_in_flight = False
+
+    def _on_repeat_seek_applied(self, _result: object) -> None:
+        self._repeat_seek_in_flight = False
+        self._last_state_key = None
 
     def _poll_playback_state(self) -> None:
         if self.view is None or not self._url or self._poll_in_flight:
@@ -882,6 +1002,7 @@ ${HIDE_SELECTOR} {
         self._poll_in_flight = False
         if not isinstance(state, dict) or not state.get("available"):
             should_play = bool(state.get("shouldPlay")) if isinstance(state, dict) else False
+            self._last_should_play = should_play
             key = (-1, -1, should_play)
             if key != self._last_state_key:
                 self._last_state_key = key
@@ -894,17 +1015,20 @@ ${HIDE_SELECTOR} {
         except (TypeError, ValueError):
             return
         should_play = bool(state.get("shouldPlay"))
-        tick_bucket = int(max(0.0, min(0.999999, ratio)) * 3840)
+        ratio = max(0.0, min(0.999999, ratio))
+        self._last_should_play = should_play
+        self._maybe_restart_repeat(measure_index, ratio, should_play)
+        tick_bucket = int(ratio * 3840)
         key = (measure_index, tick_bucket, should_play)
         if key == self._last_state_key:
             return
         self._last_state_key = key
+        payload = dict(state)
+        payload["measureIndex"] = measure_index
+        payload["ratio"] = ratio
+        payload["shouldPlay"] = should_play
         self.playbackPositionChanged.emit(
-            {
-                "measureIndex": measure_index,
-                "ratio": ratio,
-                "shouldPlay": should_play,
-            }
+            payload
         )
 
     def _update_fallback_html(self) -> None:
